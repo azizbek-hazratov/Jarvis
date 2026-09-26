@@ -1,0 +1,45 @@
+# Xavfsizlik uchun: bu papka juda ko'p shaxsiy/sirli fayl saqlaydi.
+# Ataylab QATTIQ yondashuv: standart holatda HECH NARSA kuzatilmaydi,
+# faqat aniq `git add <fayl>` bilan qo'shilgan fayllar commit qilinadi.
+# Bu fayl asosan HUJJAT sifatida xizmat qiladi (nima sir ekanini eslatib
+# turadi) — asosiy himoya `git add -A`/`git add .` ISHLATMASLIK qoidasi.
+
+# Muhitlar/sozlamalar
+.env
+.env.*
+config.py
+
+# Telegram/Telethon sessiyalari (= akkountga kirish huquqi bilan barobar)
+*.session
+*.session-journal
+
+# Token/kalit/cookie fayllari
+*token*
+*kalit*
+*.pem
+*.key
+*secret*
+vps_kalitlar/
+
+# Loglar va vaqtinchalik audit fayllari
+*.log
+_diag_bash.log
+_audit_*.txt
+_audit_*.csv
+
+# Ma'lumotlar bazasi zaxiralari
+*.dump
+
+# Python kesh
+__pycache__/
+*.pyc
+
+# Shaxsiy suhbat/xotira arxivi (real mijoz/shaxsiy ma'lumot ko'p)
+suhbatlar/
+xotira/
+
+# Skrinshot/media chiqindilar
+*.png
+*.jpg
+*.jpeg
+kiruvchi/
