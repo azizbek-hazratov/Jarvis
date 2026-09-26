@@ -88,6 +88,52 @@ holida qulayroq, faqat qisqa va tabiiy gapga o'xshagan javoblarda ishlat.
 YUBOR_RE = re.compile(r"\[\[\s*YUBOR\s*:\s*(.+?)\s*\]\]")
 MAX_FAYL = 49 * 1024 * 1024  # Telegram bot chegarasi ~50 MB
 
+# "Holat"/"tugatdingmi" turidagi so'rovlar — Jarvis band bo'lsa ham
+# NAVBATSIZ, darhol jarvis.holat_matni() bilan javob beriladi (2026-09-26).
+HOLAT_KALIT_SOZLAR = (
+    "holat", "tugad", "tugat", "qancha vaqt", "necha vaqt",
+    "qanday ketyapti", "hali tugamadi", "nima bo'ldi",
+)
+
+
+def _holat_sorovimi(text: str) -> bool:
+    t = (text or "").lower()
+    return any(soz in t for soz in HOLAT_KALIT_SOZLAR)
+
+
+def _sdk_uchun_xavfsiz_matn(text: str) -> str:
+    """2026-09-26 ANIQLANGAN XATO: agar matn '/' bilan boshlansa (va bu
+    bizning haqiqiy buyrug'imiz /start, /esla, /stop bo'lmasa — ular
+    alohida CommandHandler orqali ushlanadi, bu funksiyaga UMUMAN kelmaydi),
+    Claude Agent SDK buni HAQIQIY slash-buyruq deb qabul qiladi va
+    "isn't available in this environment" xatosini qaytaradi — Azizbekning
+    oddiy matni (masalan "/ozini tekshir" kabi, Telegram bularni bot-buyruq
+    ENTITY deb belgilamaydi, chunki '/' dan keyin bo'sh joy bor — shuning
+    uchun ular filters.COMMAND'dan o'tib, to'g'ridan-to'g'ri shu yerga
+    keladi) SDK tomonidan bajarilmay, xatoga aylanib qoladi. Tuzatish:
+    shunday matnlarni SDK'ga yuborishdan oldin, ular '/' bilan
+    BOSHLANMAYDIGAN qilib qayta o'raymiz — mazmuni to'liq saqlanadi."""
+    if text and text.startswith("/"):
+        return "(Xabar '/' bilan boshlangan — oddiy matn sifatida yuboryapman.)\n" + text
+    return text
+
+
+def _heartbeat_callback(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """jarvis.ask(..., on_heartbeat=...) uchun — ~150s'da bir marta
+    sinxron chaqiriladi, shu yerdan Telegramga xabar yuborishni
+    asinxron task sifatida rejalashtiramiz (o'zi kutmaydi)."""
+
+    def on_hb(qadam: str):
+        async def yubor():
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=f"⏳ Ishlayapman: {qadam}")
+            except Exception:
+                pass
+
+        asyncio.create_task(yubor())
+
+    return on_hb
+
 # ---------- Ovozli xabarlarni avtomatik matnga o'girish ----------
 # Asosiy yo'l: Google STT (bepul web API) — tez (~2 soniya) va sezilarli aniqroq.
 # Zaxira yo'l: mahalliy Whisper "small" — internet yo'q yoki Google xato bersa
@@ -231,6 +277,22 @@ async def esla(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Xotirani yangilashda xato yuz berdi.")
 
 
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/stop — Telegram darajasida ushlanadi, SDK'ga UMUMAN yuborilmaydi
+    (2026-09-26). Ataylab telegram-darajasidagi `lock`ni OLMAYDI — chunki
+    o'sha lock hozir ishlayotgan so'rov davomida band, aks holda /stop
+    navbatda tiqilib qolib, hech qachon ishlamas edi. jarvis.stop() ning
+    o'zi ichkarida haqiqiy to'xtatishni (interrupt + kerak bo'lsa taskkill)
+    bajaradi va "shu paytgacha bajarilganlar" + to'xtatilgan bola-jarayonlar
+    haqida to'liq hisobotni matn sifatida qaytaradi — shuni to'g'ridan-
+    to'g'ri Azizbekka yuboramiz."""
+    if update.effective_user.id != OWNER_ID:
+        return
+    jarvis: Jarvis = context.application.bot_data["jarvis"]
+    javob = await jarvis.stop()
+    await update.message.reply_text(javob)
+
+
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Faqat egasi bilan gaplashadi
     if update.effective_user.id != OWNER_ID:
@@ -241,15 +303,28 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     jarvis: Jarvis = context.application.bot_data["jarvis"]
 
-    if lock.locked():
+    if jarvis.is_busy:
+        # (c) "holat"/"tugatdingmi" kabi so'rovlarga NAVBATSIZ, darhol javob.
+        if _holat_sorovimi(text):
+            await update.message.reply_text(jarvis.holat_matni())
+            return
+        # Joriy bajarilayotgan so'rov bilan AYNAN bir xil xabar qayta
+        # kelsa — qayta navbatga qo'yib ikki marta bajarmaymiz.
+        joriy = (jarvis.current_request_text or "").strip()
+        if text.strip() and text.strip() == joriy:
+            await update.message.reply_text("Bu allaqachon bajarilmoqda.")
+            return
         await update.message.reply_text(
             "⏳ Band — oldingi so'rovni bajarayapman, tugashi bilan shu xabaringizga javob beraman."
         )
 
+    xabar = _sdk_uchun_xavfsiz_matn(text)
+    on_hb = _heartbeat_callback(context, update.effective_chat.id)
+
     async with lock, yozyapti(context, update.effective_chat.id):
         band_belgila("telegram")  # pixel-ofis: Jarvis Telegramdan real so'rov ishlayapti
         try:
-            javob = await jarvis.ask(text)
+            javob = await jarvis.ask(xabar, on_heartbeat=on_hb)
         except Exception as e:
             javob = f"Xatolik yuz berdi: {e}"
         finally:
@@ -341,10 +416,11 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         jarvis: Jarvis = context.application.bot_data["jarvis"]
+        on_hb = _heartbeat_callback(context, update.effective_chat.id)
         async with lock:
             band_belgila("telegram")  # pixel-ofis: Jarvis Telegramdan real so'rov ishlayapti
             try:
-                javob = await jarvis.ask(savol)
+                javob = await jarvis.ask(savol, on_heartbeat=on_hb)
             except Exception as e:
                 javob = f"Xatolik yuz berdi: {e}"
             finally:
@@ -394,6 +470,7 @@ def main():
     )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("esla", esla))
+    app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(
         MessageHandler(
             filters.Document.ALL
