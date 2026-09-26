@@ -53,9 +53,12 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     AssistantMessage,
     TextBlock,
+    ToolUseBlock,
     PermissionResultAllow,
     PermissionResultDeny,
 )
+
+import jarvis_fon_ishlar as _fon_ishlar
 
 BASE_DIR = Path(__file__).parent
 MEM_DIR = BASE_DIR / "xotira"
@@ -285,11 +288,95 @@ PROMPT_LIMIT = 24000      # butun tizim ko'rsatmasi uchun xavfsiz chegara
 # Bu fayllar to'liq qo'yiladi (kichik va har doim kerak)
 MEM_FULL = ["profil.md", "indeks.md", "vazifalar.md"]
 
-# Bitta so'rov (ask/remember) shuncha soniyadan ortiq davom etsa, bekor
-# qilinadi. self._lock qo'shilgach bu MAJBURIY: aks holda bitta osilib qolgan
-# so'rov butun navbatni ABADIY to'xtatib qo'yishi mumkin edi (2026-09-05,
-# Azizbek e'tirof etgan xavf — avval bunday timeout umuman yo'q edi).
-ASK_TIMEOUT_S = 600
+# 2026-09-26 TUZATISH (AzizEdu production hodisasi — batafsil izoh
+# _reset_client()da): avval bitta qattiq ASK_TIMEOUT_S=600 bor edi, va
+# tugaganda FAQAT "bekor qildim" deb aytib, Python-tarafdagi kutishni
+# bekor qilardi — TASHQI claude.exe/tool-jarayonlar esa hech qanday signal
+# olmay ISHLASHDA DAVOM ETARDI. Endi ikki qatlam:
+# - HEARTBEAT_INTERVAL_S: ish davom etayotganda shuncha soniyada bir marta
+#   "hali ishlayapman, oxirgi qadam: ..." signali beriladi.
+# - MAX_ASK_TIMEOUT_S: FAQAT abadiy osilib qolishning oldini oluvchi ZAXIRA
+#   chegara (haqiqiy uzoq production ishlar soatlab davom etishi mumkin
+#   bo'lgani uchun ataylab juda katta). Bu yerga yetilganda endi HAQIQATDA
+#   to'xtatiladi (`_majburan_toxtat()` — interrupt() + kerak bo'lsa
+#   process-daraxtini taskkill bilan o'ldirish), shunchaki aytib qo'yilmaydi.
+HEARTBEAT_INTERVAL_S = 150  # 2.5 daqiqa
+MAX_ASK_TIMEOUT_S = 7200  # 2 soat — zaxira, oddiy holatda yetilmasligi kerak
+
+# Fon-agent/uzoq-ish "holat so'rovi" heuristikasi — lock band bo'lganda
+# kelgan xabar shu kalit so'zlardan birini o'z ichiga olsa, navbatga
+# qo'yilmasdan DARHOL joriy holat bilan javob beriladi (2026-09-26).
+HOLAT_SOROVI_KALIT_SOZLAR = (
+    "holat", "tugadi", "tugatding", "tugatdim", "qanday ketyapti",
+    "hali tugamadi", "band mi", "bandmi", "ishlayapsanmi", "nima bo'lyapti",
+)
+
+
+def holat_sorovimi(text: str) -> bool:
+    """Xabar 'holat/tugatdingmi' kabi so'rovmi — shunday bo'lsa navbatga
+    qo'yilmasdan darhol joriy holat bilan javob beriladi."""
+    past = (text or "").strip().lower()
+    return any(kalit in past for kalit in HOLAT_SOROVI_KALIT_SOZLAR)
+
+
+def _tool_qadam_matni(block: "ToolUseBlock") -> str:
+    """Heartbeat/holat xabari uchun: oxirgi ishlatilgan vositaning qisqa,
+    o'qish mumkin bo'lgan tavsifi (masalan 'Bash — npm test', 'Read —
+    D:\\...\\server.js')."""
+    nomi = getattr(block, "name", "vosita")
+    kirish = getattr(block, "input", None) or {}
+    tafsilot = ""
+    try:
+        if isinstance(kirish, dict):
+            for kalit in ("command", "file_path", "pattern", "description", "prompt", "query"):
+                if kirish.get(kalit):
+                    tafsilot = str(kirish[kalit])
+                    break
+    except Exception:
+        pass
+    tafsilot = tafsilot.replace("\n", " ").strip()
+    if len(tafsilot) > 100:
+        tafsilot = tafsilot[:100] + "…"
+    return f"{nomi}" + (f" — {tafsilot}" if tafsilot else "")
+
+
+async def _eski_jarayonni_tekshir_va_ozdir(pid, kutish_s: int = 10) -> bool:
+    """interrupt()+disconnect()dan keyin, eski claude.exe jarayoni (PID)
+    hali ham Windows jarayonlar ro'yxatida tursa, `kutish_s` soniya kutadi,
+    keyin ham tirik bo'lsa `taskkill /PID <pid> /T /F` bilan BUTUN jarayon
+    daraxtini (bola-jarayonlar — masalan uzoq Bash/SSH — bilan birga)
+    majburan o'ldiradi. Faqat Windows'da ishlaydi. True qaytarsa — majburan
+    o'ldirish HAQIQATDA kerak bo'ldi (halol hisobot uchun muhim)."""
+    if not pid or sys.platform != "win32":
+        return False
+    loop = asyncio.get_event_loop()
+    for _ in range(kutish_s):
+        await asyncio.sleep(1)
+        try:
+            natija = await loop.run_in_executor(
+                None,
+                lambda: _subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}"],
+                    capture_output=True, text=True,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                ),
+            )
+            if str(pid) not in natija.stdout:
+                return False  # o'z-o'zidan tugadi, majburiylik kerak emas
+        except Exception:
+            return False
+    diag(f"PID {pid} {kutish_s}s dan keyin ham tirik — taskkill /T /F")
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: _subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True, creationflags=_subprocess.CREATE_NO_WINDOW,
+            ),
+        )
+    except Exception:
+        pass
+    return True
 
 
 def _tail(matn: str, limit: int) -> str:
@@ -697,6 +784,44 @@ class Jarvis:
         # faqat bitta ask() ishlaydi, qolganlari navbatda kutadi.
         self._lock = asyncio.Lock()
 
+        # 2026-09-26 qo'shilgan holat (heartbeat/dublikat-bloklash/`/stop`
+        # uchun) — barchasi FAQAT `self._lock` band bo'lganda mazmunli,
+        # bo'sh bo'lsa None/bo'sh qiymatlarda turadi.
+        self._current_task: asyncio.Task | None = None
+        self._current_request_text: str | None = None
+        self._request_started_at: datetime | None = None
+        self._last_step: str | None = None
+        self._partial_parts: list[str] = []
+        self._fon_ish_id: str | None = None
+
+    @property
+    def is_busy(self) -> bool:
+        return self._lock.locked()
+
+    @property
+    def current_request_text(self) -> str | None:
+        """Hozir bajarilayotgan so'rov matni (bo'sh bo'lsa None) — dublikat
+        aniqlash uchun tashqi kod (jarvis_telegram.py) shu bilan solishtiradi."""
+        return self._current_request_text
+
+    def holat_matni(self) -> str:
+        """'/holat', 'tugatdingmi' kabi so'rovlarga darhol (navbatsiz)
+        beriladigan javob matni."""
+        if not self.is_busy:
+            return "Hozir bo'sh — hech narsa bajarilmayapti."
+        elapsed = 0.0
+        if self._request_started_at:
+            elapsed = (datetime.now() - self._request_started_at).total_seconds()
+        daq, son = divmod(int(elapsed), 60)
+        qadam = self._last_step or "boshlanmoqda"
+        soragi = (self._current_request_text or "")[:200]
+        return (
+            f"⏳ Band — {daq}:{son:02d} davomida ishlayapman.\n"
+            f"So'rov: {soragi}\n"
+            f"Oxirgi qadam: {qadam}\n\n"
+            "Yakunlashni istasangiz /stop yozing."
+        )
+
     async def __aenter__(self):
         _ensure_dirs()
         self._client = ClaudeSDKClient(options=self._options)
@@ -707,26 +832,60 @@ class Jarvis:
         if self._client:
             await self._client.disconnect()
 
-    async def _reset_client(self):
-        """Timeout'dan keyin ulanishni butunlay yangilaydi.
+    async def _reset_client(self, sabab: str = "timeout") -> bool:
+        """Uzoq/osilib qolgan so'rovdan keyin ulanishni butunlay yangilaydi.
 
-        Sabab: agar so'rov `asyncio.wait_for` bilan majburan bekor qilinsa,
-        Claude CLI jarayoni o'sha so'rovga hali ham javob yozayotgan bo'lishi
-        mumkin — shu "kechikkan" javob keyingi (butunlay bog'liqsiz) so'rov
-        `receive_response()` oqimiga tushib, yana aralashish (ILDIZ SABAB #2
-        kabi) yaratishi mumkin. Shuning uchun eski ulanishni tashlab, toza
-        ulanish bilan boshlaymiz — xavfsizroq, garchi xotiradagi suhbat
-        konteksti (shu client ichidagi) yo'qolsa ham.
+        2026-09-26 TUZATISH — ILDIZ SABAB (AzizEdu production hodisasi,
+        Azizbek payqagan): avval bu funksiya FAQAT `disconnect()` chaqirardi
+        — bu esa faqat Python-tarafdagi ulanishni uzardi. Tashqi `claude.exe`
+        CLI jarayoni (va uning ichida ishga tushirilgan Bash/SSH kabi tool-
+        jarayonlar) hech qanday to'xtatish signali OLMAY, ishlashda DAVOM
+        ETARDI — shuning uchun "bekor qildim" degan xabar productionda
+        30+ daqiqa davomida yolg'on bo'lib chiqdi (kod hali yozilar, backup
+        olinar, deploy qilinar edi, Azizbek buni keyinroq zaxira fayl
+        vaqtlaridan payqab qoldi).
+
+        Endi 3 bosqich:
+        (1) HAQIQIY `interrupt()` — SDK'ning rasmiy streaming-to'xtatish
+            signali, CLI o'zining ichki tool-jarayonlarini ham tozalashi
+            kutiladi (bu — asosiy, "yumshoq" tuzatish).
+        (2) `disconnect()` — Python-tarafdagi ulanishni yopadi (SDK o'zi
+            ham terminate/kill eskalatsiyasini ichida qiladi, lekin FAQAT
+            bevosita bola-jarayon uchun).
+        (3) Ehtiyot chorasi (Azizbek aniq so'ragan): agar eski claude.exe
+            PID'i 10 soniyada o'z-o'zidan tugamasa, `taskkill /T /F` bilan
+            BUTUN jarayon daraxti (nabira-jarayonlar bilan birga) majburan
+            o'ldiriladi. Natija chaqiruvchiga halol aytiladi (True = majburan
+            o'ldirishga to'g'ri keldi).
         """
+        eski_pid = None
         try:
-            await self._client.disconnect()
+            eski_pid = self._client._transport._process.pid
         except Exception:
             pass
+
+        try:
+            await asyncio.wait_for(self._client.interrupt(), timeout=10)
+            diag(f"interrupt() yuborildi (sabab: {sabab})")
+        except Exception as e:
+            diag(f"interrupt() muvaffaqiyatsiz/timeout (sabab: {sabab}): {e}")
+
+        try:
+            await asyncio.wait_for(self._client.disconnect(), timeout=15)
+        except Exception as e:
+            diag(f"disconnect() muvaffaqiyatsiz/timeout: {e}")
+
+        majburan_oldirildi = await _eski_jarayonni_tekshir_va_ozdir(eski_pid)
+        if majburan_oldirildi:
+            diag(f"PID {eski_pid} taskkill /T /F bilan majburan o'ldirildi")
+
         self._client = ClaudeSDKClient(options=self._options)
         await self._client.connect()
+        return majburan_oldirildi
 
     async def _run(self, text: str, on_chunk=None) -> str:
-        parts = []
+        parts: list[str] = []
+        self._partial_parts = parts
         await self._client.query(text)
         async for message in self._client.receive_response():
             if isinstance(message, AssistantMessage):
@@ -735,9 +894,61 @@ class Jarvis:
                         parts.append(block.text)
                         if on_chunk:
                             on_chunk(block.text)
+                    elif isinstance(block, ToolUseBlock):
+                        self._last_step = _tool_qadam_matni(block)
         return "".join(parts)
 
-    async def ask(self, text: str, on_chunk=None) -> str:
+    async def _heartbeat_sikli(self, on_heartbeat) -> None:
+        """Ish davom etayotganda har HEARTBEAT_INTERVAL_S soniyada bir marta
+        `on_heartbeat(oxirgi_qadam)` chaqiradi. `ask()` bu vazifani asosiy ish
+        bilan BIR VAQTDA ishga tushiradi va tugagach cancel qiladi."""
+        while True:
+            await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+            if on_heartbeat:
+                try:
+                    qadam = self._last_step or "ishlayapman..."
+                    on_heartbeat(qadam)
+                except Exception:
+                    pass
+
+    async def _majburan_toxtat(self, run_task: asyncio.Task, sabab: str) -> str:
+        """MAX_ASK_TIMEOUT_S zaxira chegarasiga yetilganda (yoki `/stop`
+        buyrug'ida) chaqiriladi — endi shunchaki "bekor qildim" deb
+        AYTIB QO'YISH emas, HAQIQATDA to'xtatadi va halol hisobot beradi."""
+        diag(f"majburan to'xtatish boshlandi (sabab: {sabab})")
+        majburan_oldirildi = await self._reset_client(sabab=sabab)
+
+        if not run_task.done():
+            run_task.cancel()
+            try:
+                await run_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        yigilgan = "".join(self._partial_parts).strip() if self._partial_parts else ""
+        xabar = f"So'rov to'xtatildi ({sabab})."
+        if self._last_step:
+            xabar += f"\nOxirgi qadam: {self._last_step}"
+        if yigilgan:
+            xabar += f"\n\nShu paytgacha bajarilganlar:\n{_tail(yigilgan, 1500)}"
+        if majburan_oldirildi:
+            xabar += (
+                "\n\n(Eslatma: eski jarayon o'z-o'zidan tugamadi — "
+                "MAJBURAN to'xtatildi, taskkill /T /F bilan.)"
+            )
+        return xabar
+
+    async def stop(self) -> str:
+        """`/stop` buyrug'i uchun: HOZIR bajarilayotgan so'rovni haqiqatan
+        to'xtatadi (interrupt + kerak bo'lsa majburan o'ldirish) va shu
+        paytgacha bajarilganlar haqida hisobot qaytaradi. Hech narsa
+        ishlamayotgan bo'lsa, shunchaki shuni aytadi (navbatga TEGMAYDI —
+        navbatdagi keyingi xabarlar o'z tartibida davom etadi)."""
+        if not self.is_busy or not self._current_task:
+            return "Hozir hech narsa bajarilmayapti — to'xtatadigan narsa yo'q."
+        return await self._majburan_toxtat(self._current_task, sabab="/stop buyrug'i")
+
+    async def ask(self, text: str, on_chunk=None, on_heartbeat=None) -> str:
         # self._lock: shu Jarvis ulanishida bir vaqtning o'zida faqat BITTA
         # so'rov ishlashini kafolatlaydi (ILDIZ SABAB #2 tuzatishi — yuqoridagi
         # izohga qara). Tashqi chaqiruvchi o'z lock'ini unutgan taqdirda ham,
@@ -762,24 +973,45 @@ class Jarvis:
                 )
                 self._pending_question = None
 
+            self._current_request_text = text
+            self._request_started_at = datetime.now()
+            self._last_step = None
+            self._partial_parts = []
+            self._fon_ish_id = _fon_ishlar.royxatga_ol("telegram", text, str(BASE_DIR))
+
+            heartbeat_task = None
+            if on_heartbeat:
+                heartbeat_task = asyncio.create_task(self._heartbeat_sikli(on_heartbeat))
+
             diag("Claude'ga so'rov yuborildi")
+            run_task = asyncio.create_task(self._run(text, on_chunk))
+            self._current_task = run_task
             try:
-                javob = await asyncio.wait_for(
-                    self._run(text, on_chunk), timeout=ASK_TIMEOUT_S
-                )
+                javob = await asyncio.wait_for(run_task, timeout=MAX_ASK_TIMEOUT_S)
             except asyncio.TimeoutError:
-                diag("Claude'dan javob kelmadi (timeout)")
-                await self._reset_client()
-                javob = (
-                    f"Kechirasiz, so'rov {ASK_TIMEOUT_S} soniyadan ko'p davom etdi, "
-                    "bekor qildim va ulanishni tozalab qayta o'rnatdim. Iltimos "
-                    "qayta urinib ko'ring (agar uzoq ish bo'lsa, kichikroq "
-                    "qismlarga bo'lib so'ra)."
+                diag(f"{MAX_ASK_TIMEOUT_S}s zaxira chegarasiga yetdi")
+                javob = await self._majburan_toxtat(
+                    run_task, sabab=f"{MAX_ASK_TIMEOUT_S}s zaxira chegarasi"
                 )
+                self._pending_question = None
+            except asyncio.CancelledError:
+                # `/stop` orqali `stop()` o'zi run_task'ni allaqachon boshqargan —
+                # bu yerga faqat run_task tashqaridan cancel qilingan holatda kelamiz.
+                javob = "To'xtatildi."
                 self._pending_question = None
             else:
                 diag("Claude'dan javob keldi")
                 self._pending_question = _extract_pending_question(javob)
+            finally:
+                if heartbeat_task:
+                    heartbeat_task.cancel()
+                if self._fon_ish_id:
+                    _fon_ishlar.royxatdan_ochir(self._fon_ish_id)
+                self._current_task = None
+                self._current_request_text = None
+                self._request_started_at = None
+                self._last_step = None
+                self._fon_ish_id = None
             if self._log:
                 log_exchange(text, javob)
             return javob
@@ -795,12 +1027,14 @@ class Jarvis:
         """Suhbat oxirida xotirani yangilaydi (javobi ko'rsatilmaydi)."""
         try:
             async with self._lock:
+                run_task = asyncio.create_task(self._run(REMEMBER_PROMPT))
+                self._current_task = run_task
                 try:
-                    await asyncio.wait_for(
-                        self._run(REMEMBER_PROMPT), timeout=ASK_TIMEOUT_S
-                    )
+                    await asyncio.wait_for(run_task, timeout=MAX_ASK_TIMEOUT_S)
                 except asyncio.TimeoutError:
-                    await self._reset_client()
+                    await self._majburan_toxtat(run_task, sabab="remember() zaxira chegarasi")
+                finally:
+                    self._current_task = None
             return True
         except Exception:
             return False
