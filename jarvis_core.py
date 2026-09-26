@@ -22,6 +22,8 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
+import psutil
+
 # SDK'ning "can_use_tool ro'yxatdagi vositalar uchun chaqirilmaydi" ogohlantirishi
 # — bu bizning ataylab qilgan sozlamamiz, shuning uchun ko'rsatmaymiz.
 warnings.filterwarnings("ignore", message=".*can_use_tool.*")
@@ -340,32 +342,94 @@ def _tool_qadam_matni(block: "ToolUseBlock") -> str:
     return f"{nomi}" + (f" — {tafsilot}" if tafsilot else "")
 
 
-async def _eski_jarayonni_tekshir_va_ozdir(pid, kutish_s: int = 10) -> bool:
-    """interrupt()+disconnect()dan keyin, eski claude.exe jarayoni (PID)
-    hali ham Windows jarayonlar ro'yxatida tursa, `kutish_s` soniya kutadi,
-    keyin ham tirik bo'lsa `taskkill /PID <pid> /T /F` bilan BUTUN jarayon
-    daraxtini (bola-jarayonlar — masalan uzoq Bash/SSH — bilan birga)
-    majburan o'ldiradi. Faqat Windows'da ishlaydi. True qaytarsa — majburan
-    o'ldirish HAQIQATDA kerak bo'ldi (halol hisobot uchun muhim)."""
+def _avlodlarni_yozib_ol(pid) -> list[dict]:
+    """`pid` (eski claude.exe) jarayonining BARCHA avlodlarini — bolalar VA
+    nabiralar, ya'ni Bash tool orqali ichkarida ishga tushirilgan uzoq
+    buyruqlar ham (masalan `python ... sleep`) — `interrupt()` chaqirishdan
+    OLDIN yozib oladi: PID, nomi, buyruq qatori, create_time.
+
+    2026-09-26 TUZATISH SABABI: eski oqim faqat asosiy claude.exe PID'ini
+    kuzatar edi — agar o'sha PID interrupt()+disconnect()dan keyin 10s
+    ICHIDA o'z-o'zidan tugasa, `taskkill /T /F` UMUMAN chaqirilmasdi, va
+    uning ichida Bash orqali ishga tushirilgan bola-jarayon ORPHAN bo'lib,
+    ota o'lgandan keyin ham ishlashda davom etardi (`/stop` sinovida
+    aynan shu holat 27s dan keyin ham tirik topilgan edi). Endi avlodlar
+    ro'yxati oldindan alohida saqlanadi va ota o'lgan-o'lmaganidan qat'i
+    nazar, TEKSHIRIB, hali tirik qolganlari alohida to'xtatiladi."""
+    if not pid:
+        return []
+    try:
+        asosiy = psutil.Process(pid)
+        avlodlar = asosiy.children(recursive=True)
+    except psutil.Error:
+        return []
+    natija = []
+    for p in avlodlar:
+        try:
+            natija.append({
+                "pid": p.pid,
+                "nomi": p.name(),
+                "buyruq": " ".join(p.cmdline()) if p.cmdline() else p.name(),
+                "create_time": p.create_time(),
+            })
+        except psutil.Error:
+            continue  # jarayon shu orada allaqachon tugagan bo'lishi mumkin
+    return natija
+
+
+def _tirik_avlodlarni_toxtat(avlodlar: list[dict]) -> list[dict]:
+    """`_avlodlarni_yozib_ol()` bilan interrupt()dan OLDIN yozib olingan
+    ro'yxatdagi jarayonlardan hali ham tirik qolganlarini to'xtatadi.
+
+    Har bir yozuv uchun PID bilan BIRGA `create_time` ham solishtiriladi —
+    shu orqali, agar o'sha PID vaqt o'tib Windows tomonidan BOSHQA (butunlay
+    begona) jarayonga qayta berilib ulgurgan bo'lsa, unga TEGILMAYDI —
+    faqat AYNAN o'sha eski, yozib olingan jarayon o'ldiriladi."""
+    oldirilganlar = []
+    for yozuv in avlodlar:
+        pid = yozuv["pid"]
+        try:
+            if not psutil.pid_exists(pid):
+                continue  # allaqachon o'z-o'zidan tugagan
+            joriy = psutil.Process(pid)
+            if abs(joriy.create_time() - yozuv["create_time"]) > 0.5:
+                continue  # PID qayta ishlatilgan — begona jarayon, tegmaymiz
+            joriy.kill()
+            oldirilganlar.append(yozuv)
+            diag(
+                f"orphan avlod jarayon to'xtatildi: PID {pid} ({yozuv['nomi']}) "
+                f"— {yozuv['buyruq'][:150]}"
+            )
+        except psutil.Error:
+            continue
+    return oldirilganlar
+
+
+async def _asosiy_pid_tirikmi(pid) -> bool:
+    """Eski claude.exe PID'i HOZIR ham Windows jarayonlar ro'yxatida bormi
+    — bitta zudlik bilan tekshiruv (kutish tashqarida, `_reset_client`da
+    bir marta amalga oshiriladi)."""
     if not pid or sys.platform != "win32":
         return False
     loop = asyncio.get_event_loop()
-    for _ in range(kutish_s):
-        await asyncio.sleep(1)
-        try:
-            natija = await loop.run_in_executor(
-                None,
-                lambda: _subprocess.run(
-                    ["tasklist", "/FI", f"PID eq {pid}"],
-                    capture_output=True, text=True,
-                    creationflags=_subprocess.CREATE_NO_WINDOW,
-                ),
-            )
-            if str(pid) not in natija.stdout:
-                return False  # o'z-o'zidan tugadi, majburiylik kerak emas
-        except Exception:
-            return False
-    diag(f"PID {pid} {kutish_s}s dan keyin ham tirik — taskkill /T /F")
+    try:
+        natija = await loop.run_in_executor(
+            None,
+            lambda: _subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True, text=True,
+                creationflags=_subprocess.CREATE_NO_WINDOW,
+            ),
+        )
+        return str(pid) in natija.stdout
+    except Exception:
+        return False
+
+
+async def _asosiy_pidni_ozdir(pid) -> None:
+    """`taskkill /PID <pid> /T /F` bilan BUTUN jarayon daraxtini (hali
+    ham tirik bo'lgan avlodlar bilan birga) majburan o'ldiradi."""
+    loop = asyncio.get_event_loop()
     try:
         await loop.run_in_executor(
             None,
@@ -376,7 +440,6 @@ async def _eski_jarayonni_tekshir_va_ozdir(pid, kutish_s: int = 10) -> bool:
         )
     except Exception:
         pass
-    return True
 
 
 def _tail(matn: str, limit: int) -> str:
@@ -832,7 +895,7 @@ class Jarvis:
         if self._client:
             await self._client.disconnect()
 
-    async def _reset_client(self, sabab: str = "timeout") -> bool:
+    async def _reset_client(self, sabab: str = "timeout") -> tuple[bool, list[dict]]:
         """Uzoq/osilib qolgan so'rovdan keyin ulanishni butunlay yangilaydi.
 
         2026-09-26 TUZATISH — ILDIZ SABAB (AzizEdu production hodisasi,
@@ -845,24 +908,44 @@ class Jarvis:
         olinar, deploy qilinar edi, Azizbek buni keyinroq zaxira fayl
         vaqtlaridan payqab qoldi).
 
-        Endi 3 bosqich:
+        2026-09-26 IKKINCHI TUZATISH (`/stop` sinovida topilgan): yuqoridagi
+        tuzatishdan keyin ham, agar eski claude.exe PID'i interrupt()dan
+        keyingi 10s ICHIDA o'z-o'zidan tugab qolsa, `taskkill /T /F`
+        UMUMAN chaqirilmasdi — natijada uning ichida Bash orqali ishga
+        tushirilgan bola-jarayon (masalan uzoq buyruq) ORPHAN bo'lib,
+        ota o'lgandan keyin ham tirik qolardi. Endi avlodlar ro'yxati
+        interrupt()dan OLDIN alohida yozib olinadi va ota tirik qolsa ham,
+        o'lsa ham — HAR IKKALA holatda ham hali tirik qolgan avlodlar
+        alohida tekshirilib to'xtatiladi.
+
+        Endi bosqichlar:
+        (0) Eski claude.exe'ning BARCHA avlodlari (PID/nomi/buyruq/
+            create_time) interrupt()dan OLDIN yozib olinadi.
         (1) HAQIQIY `interrupt()` — SDK'ning rasmiy streaming-to'xtatish
             signali, CLI o'zining ichki tool-jarayonlarini ham tozalashi
             kutiladi (bu — asosiy, "yumshoq" tuzatish).
-        (2) `disconnect()` — Python-tarafdagi ulanishni yopadi (SDK o'zi
-            ham terminate/kill eskalatsiyasini ichida qiladi, lekin FAQAT
-            bevosita bola-jarayon uchun).
-        (3) Ehtiyot chorasi (Azizbek aniq so'ragan): agar eski claude.exe
-            PID'i 10 soniyada o'z-o'zidan tugamasa, `taskkill /T /F` bilan
-            BUTUN jarayon daraxti (nabira-jarayonlar bilan birga) majburan
-            o'ldiriladi. Natija chaqiruvchiga halol aytiladi (True = majburan
-            o'ldirishga to'g'ri keldi).
+        (2) `disconnect()` — Python-tarafdagi ulanishni yopadi.
+        (3) interrupt()dan keyin 10 soniya kutiladi.
+        (4) Agar eski asosiy PID hali tirik bo'lsa — `taskkill /T /F` bilan
+            BUTUN jarayon daraxti majburan o'ldiriladi.
+        (5) (0)-bosqichda yozib olingan avlodlardan HALI TIRIK qolganlari
+            (asosiy jarayon o'lgan-o'lmaganidan qat'i nazar) — PID VA
+            create_time solishtirilib (begona/qayta ishlatilgan PID'ga
+            tegmaslik uchun) — alohida to'xtatiladi.
+        Natija: (majburan_oldirildi: bool, to'xtatilgan_avlodlar: list[dict]).
         """
         eski_pid = None
         try:
             eski_pid = self._client._transport._process.pid
         except Exception:
             pass
+
+        avlodlar = _avlodlarni_yozib_ol(eski_pid)
+        if avlodlar:
+            diag(
+                f"interrupt()dan oldin {len(avlodlar)} ta avlod yozib olindi: "
+                + ", ".join(f"PID {a['pid']} ({a['nomi']})" for a in avlodlar)
+            )
 
         try:
             await asyncio.wait_for(self._client.interrupt(), timeout=10)
@@ -875,13 +958,24 @@ class Jarvis:
         except Exception as e:
             diag(f"disconnect() muvaffaqiyatsiz/timeout: {e}")
 
-        majburan_oldirildi = await _eski_jarayonni_tekshir_va_ozdir(eski_pid)
-        if majburan_oldirildi:
-            diag(f"PID {eski_pid} taskkill /T /F bilan majburan o'ldirildi")
+        await asyncio.sleep(10)  # interrupt()dan keyin 10 soniya kutish
+
+        majburan_oldirildi = False
+        if await _asosiy_pid_tirikmi(eski_pid):
+            diag(f"PID {eski_pid} 10s dan keyin ham tirik — taskkill /T /F")
+            await _asosiy_pidni_ozdir(eski_pid)
+            majburan_oldirildi = True
+
+        toxtatilgan_avlodlar = _tirik_avlodlarni_toxtat(avlodlar)
+        if toxtatilgan_avlodlar:
+            diag(
+                f"{len(toxtatilgan_avlodlar)} ta orphan avlod jarayon "
+                "alohida to'xtatildi (asosiy jarayon o'lgandan keyin ham tirik qolgan edi)."
+            )
 
         self._client = ClaudeSDKClient(options=self._options)
         await self._client.connect()
-        return majburan_oldirildi
+        return majburan_oldirildi, toxtatilgan_avlodlar
 
     async def _run(self, text: str, on_chunk=None) -> str:
         parts: list[str] = []
@@ -916,7 +1010,7 @@ class Jarvis:
         buyrug'ida) chaqiriladi — endi shunchaki "bekor qildim" deb
         AYTIB QO'YISH emas, HAQIQATDA to'xtatadi va halol hisobot beradi."""
         diag(f"majburan to'xtatish boshlandi (sabab: {sabab})")
-        majburan_oldirildi = await self._reset_client(sabab=sabab)
+        majburan_oldirildi, toxtatilgan_avlodlar = await self._reset_client(sabab=sabab)
 
         if not run_task.done():
             run_task.cancel()
@@ -935,6 +1029,16 @@ class Jarvis:
             xabar += (
                 "\n\n(Eslatma: eski jarayon o'z-o'zidan tugamadi — "
                 "MAJBURAN to'xtatildi, taskkill /T /F bilan.)"
+            )
+        if toxtatilgan_avlodlar:
+            royxat = "\n".join(
+                f"  - PID {a['pid']} ({a['nomi']}): {a['buyruq'][:120]}"
+                for a in toxtatilgan_avlodlar
+            )
+            xabar += (
+                f"\n\n(Eslatma: {len(toxtatilgan_avlodlar)} ta ichki bola-jarayon "
+                f"ota o'lgandan keyin ham orphan bo'lib tirik qolgan edi — "
+                f"alohida to'xtatildi:\n{royxat})"
             )
         return xabar
 
