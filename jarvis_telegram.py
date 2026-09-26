@@ -466,6 +466,16 @@ def main():
         .token(TELEGRAM_TOKEN)
         .post_init(post_init)
         .post_shutdown(post_shutdown)
+        # 2026-09-26 MUHIM: standart holatda PTB yangilanishlarni BITTALAB,
+        # NAVBAT bilan qayta ishlaydi ("If not called, updates will be
+        # processed one by one" — ApplicationBuilder hujjati). Bu bilan
+        # /stop (`stop_cmd`) band paytida (jarvis.ask() hali tugamagan
+        # handle() ichida) HECH QACHON dispatch qilinmas edi — PTB navbatda
+        # oldingi handler tugashini kutib turardi, /stop shu navbatda
+        # tiqilib qolardi. `concurrent_updates(True)` bilan har yangilanish
+        # alohida task sifatida ishga tushadi — /stop endi band paytida ham
+        # DARHOL ishlaydi.
+        .concurrent_updates(True)
         .build()
     )
     app.add_handler(CommandHandler("start", start))
