@@ -390,9 +390,12 @@ def _tirik_avlodlarni_toxtat(avlodlar: list[dict]) -> list[dict]:
         pid = yozuv["pid"]
         try:
             if not psutil.pid_exists(pid):
+                diag(f"DEBUG avlod PID {pid}: pid_exists=False, o'tkazib yuborildi")
                 continue  # allaqachon o'z-o'zidan tugagan
             joriy = psutil.Process(pid)
-            if abs(joriy.create_time() - yozuv["create_time"]) > 0.5:
+            farq = abs(joriy.create_time() - yozuv["create_time"])
+            if farq > 0.5:
+                diag(f"DEBUG avlod PID {pid}: create_time farqi {farq}, begona deb hisoblandi")
                 continue  # PID qayta ishlatilgan — begona jarayon, tegmaymiz
             joriy.kill()
             oldirilganlar.append(yozuv)
@@ -400,7 +403,8 @@ def _tirik_avlodlarni_toxtat(avlodlar: list[dict]) -> list[dict]:
                 f"orphan avlod jarayon to'xtatildi: PID {pid} ({yozuv['nomi']}) "
                 f"— {yozuv['buyruq'][:150]}"
             )
-        except psutil.Error:
+        except psutil.Error as e:
+            diag(f"DEBUG avlod PID {pid}: psutil.Error {type(e).__name__}: {e}")
             continue
     return oldirilganlar
 
