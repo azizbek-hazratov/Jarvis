@@ -14,17 +14,31 @@ Ishga tushirish:  python jarvis_telegram.py
 """
 
 import asyncio
+import difflib
+import io
+import json
+import os
 import re
 import subprocess
+import uuid
 from datetime import datetime
 from pathlib import Path
 
+# 2026-09-28: sinov-bot rejimi -- JARVIS_SINOV=1 bilan ishga tushirilsa,
+# config.py'dagi TEST_BOT_TOKEN'dan foydalanadi va heartbeat faylini
+# alohida (heartbeat_jarvis_sinov.json) yozadi, shunda asosiy Jarvis
+# jarayoni/heartbeat'iga UMUMAN tegmaydi -- xavfli o'zgarishlarni
+# asosiy botni to'xtatmasdan sinash uchun.
+_SINOV = os.environ.get("JARVIS_SINOV") == "1"
+
 from contextlib import asynccontextmanager
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -33,16 +47,70 @@ from telegram.ext import (
 
 from jarvis_core import Jarvis, auto_approve, diag
 from jarvis_holati_signal import band_belgila, bosh_belgila  # pixel-ofis "AI Xodimlarim" uchun band/bo'sh signali
+import jarvis_xodim_telegram as jxt  # noqa: E402  (2026-09-28, Jarvis OS -- "Ism, ..." murojaatlarini bridge'ga yo'naltirish)
+import jarvis_xodim_qoidalar as jxq  # noqa: E402  (2026-09-28, Jarvis OS -- har xodim uchun tanbeh/qoida xotirasi)
+
+# 2026-11-06: "<ism>ga ... deb yoz" kabi shaxsiy-yozish buyruqlarini tez aniqlash
+# (faqat shular bridge'ga yuboriladi -- qolgani kechikmasdan Claude'ga boradi).
+_SHAXSIY_BUYRUQ_NAQSH = re.compile(
+    r"(?i)(deb\s+(yoz|ayt|yubor|jo.nat)|ga\s+(yoz|yubor|jo.nat|ayt)\b|yozib\s+(qo.y|yubor)|"
+    r"xabar\s+(yoz|yubor|jo.nat)|^\s*\S+(ga|ka|qa)\b.*\b(yoz|ayt|yubor|jo.nat)\b)"
+)
 
 try:
-    from config import TELEGRAM_TOKEN, OWNER_ID
+    if _SINOV:
+        from config import TEST_BOT_TOKEN as TELEGRAM_TOKEN, OWNER_ID
+    else:
+        from config import TELEGRAM_TOKEN, OWNER_ID
 except ImportError:
     raise SystemExit(
         "config.py fayli topilmadi yoki to'liq emas.\n"
-        "config.py ichida TELEGRAM_TOKEN va OWNER_ID bo'lishi kerak."
+        "config.py ichida TELEGRAM_TOKEN va OWNER_ID (yoki sinov uchun TEST_BOT_TOKEN) bo'lishi kerak."
     )
 
 lock = asyncio.Lock()
+
+# ============================================================================
+# Uzun xabarlarni birlashtirish (2026-10-09, Azizbek tuzatishi)
+# ============================================================================
+# Telegram klienti 4096 belgidan uzun matnni avtomatik bir necha xabarga
+# bo'lib yuboradi. Har bir qism alohida ishlanganda, qism ICHIDA tasodifan
+# "<ism>ga ... deb yoz" kabi shaxsiy-buyruq naqshiga mos so'z birikmasi
+# uchrab qolsa, o'sha BITTA qism butun topshiriq o'rniga shaxsiy-xabar
+# sifatida talqin qilinib, qolgan qismlar e'tiborsiz qolar edi (aynan shu
+# sababli uzun audit/topshiriq matni yo'qolib, "kontakt topilmadi" javobi
+# qaytgan). Endi: bitta chatdan ketma-ket kelgan, bo'linish chegarasiga
+# yaqin uzunlikdagi xabar qismlari qisqa kutish bilan birlashtiriladi.
+_UZUN_XABAR_BUFER: dict = {}
+_UZUN_XABAR_CHEGARA = 3900  # Telegram haqiqiy limiti 4096 -- zaxira bilan
+_UZUN_XABAR_KUTISH_S = 1.2
+
+
+async def _xabar_qismini_birlashtir(chat_id: int, matn: str):
+    """`matn` -- endigina kelgan xabar. Agar bu (yoki oldingi) qism
+    bo'linish chegarasiga yaqin bo'lsa, qisqa vaqt kutib, davomi kelmasa
+    yig'ilgan TO'LIQ matnni qaytaradi. Davomi hali kutilayotgan bo'lsa None
+    qaytaradi -- chaqiruvchi HECH NARSA qilmasligi kerak (keyingi qism
+    kelganda ANIQ shu funksiya oxirgi marta yakunlab ishlov beradi)."""
+    buf = _UZUN_XABAR_BUFER.get(chat_id)
+    if buf is None and len(matn) < _UZUN_XABAR_CHEGARA:
+        return matn
+    if buf is None:
+        buf = {"qismlar": [], "versiya": 0}
+        _UZUN_XABAR_BUFER[chat_id] = buf
+    buf["qismlar"].append(matn)
+    buf["versiya"] += 1
+    mening_versiyam = buf["versiya"]
+    await asyncio.sleep(_UZUN_XABAR_KUTISH_S)
+    if buf["versiya"] != mening_versiyam:
+        return None  # shu orada yana qism keldi -- oxirgi chaqiruv yakunlaydi
+    _UZUN_XABAR_BUFER.pop(chat_id, None)
+    return "".join(buf["qismlar"])
+
+
+# "Kontakt topilmadi" -> "Ha/Yo'q, topshiriq sifatida bajarilsinmi?" --
+# 2026-10-09, tasdiq kutilayotgan asl matnlar shu yerda vaqtincha saqlanadi.
+_KONTAKT_TOPILMADI_KUTILMOQDA: dict = {}
 
 # Telegram orqali kelgan fayllar shu papkaga tushadi
 INBOX = Path(__file__).parent / "kiruvchi"
@@ -83,6 +151,13 @@ Qachon ishlatish: Azizbek aniq "ovozli javob ber"/"ovoz bilan ayt" desa,
 yoki u ovozli xabar yuborganda va javobni ham ovozda eshitish mantiqan
 to'g'ri bo'lsa. Har doim ovozga aylantirmang — uzun/texnik javoblar matn
 holida qulayroq, faqat qisqa va tabiiy gapga o'xshagan javoblarda ishlat.
+
+ESLATMA (2026-10-11): bundan tashqari AVTOMATIK ovozli-javob sozlamasi ham
+bor (/ovoz yoq|ochir, Azizbek boshqaradi) — yoqilgan bo'lsa, shu xabarning
+o'zida alohida ko'rsatma (har safar yangilanib) keladi, o'sha holatda
+yuqoridagi usul (Bash + [[YUBOR:...]]) EMAS, balki [[OVOZ: qisqa xulosa]]
+belgisidan foydalaning — bot buni avtomatik ovozga aylantirib yuboradi,
+siz o'zingiz ovozga_aylantir.py'ni ishga tushirishingiz shart emas.
 """
 
 YUBOR_RE = re.compile(r"\[\[\s*YUBOR\s*:\s*(.+?)\s*\]\]")
@@ -135,74 +210,87 @@ def _heartbeat_callback(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     return on_hb
 
 # ---------- Ovozli xabarlarni avtomatik matnga o'girish ----------
-# Asosiy yo'l: Google STT (bepul web API) — tez (~2 soniya) va sezilarli aniqroq.
-# Zaxira yo'l: mahalliy Whisper "small" — internet yo'q yoki Google xato bersa
-# ishga tushadi, sekinroq va kamroq aniq, lekin hech bo'lmaganda tezroq javob
-# beradi ("medium" model sinalgan edi — 5 daqiqa ketib ustiga NOTO'G'RI natija
-# berdi, shuning uchun zaxira sifatida ham ishlatilmaydi, 2026-09-05).
-#
-# Model bir marta yuklanadi (birinchi ovozli xabarda), keyin xotirada qoladi —
-# har safar qayta yuklanmaydi, shuning uchun 2-xabardan boshlab tez ishlaydi.
-_whisper_model = None
+# 2026-09-28: bu mantiq `jarvis_stt.py`ga ko'chirildi -- panel (bridge, 🎤
+# tugmasi) ham AYNAN shu STT yo'lidan (Google + Whisper zaxira, logi bilan)
+# foydalanishi uchun, ikkinchi marta yozilmasin.
+from jarvis_stt import ovozni_matnga  # noqa: E402
+
+# ---------- Ovozli JAVOB (matnni ovozga aylantirib qaytarish) ----------
+# 2026-10-11 (Azizbek buyrug'i): "javobni matn ko'rinishida ham, ovozli
+# xabar sifatida ham qaytar, sozlamada yoqish/o'chirish imkoni bo'lsin,
+# uzun javobning faqat qisqa xulosasi ovozga aylantirilsin". Mavjud
+# `ovozga_aylantir.matnni_ovozga` (Edge Neural TTS, bepul) ishlatiladi --
+# yangi tashqi xizmat/kalit SHART EMAS.
+from ovozga_aylantir import matnni_ovozga  # noqa: E402
+from jarvis_ovoz_sozlamalari import ovozli_javob_yoqilganmi, ovozli_javobni_ornat  # noqa: E402
+
+OVOZ_RE = re.compile(r"\[\[\s*OVOZ\s*:\s*(.+?)\s*\]\]", re.DOTALL)
+# Agar AI [[OVOZ: ...]] belgisini QO'YMASA (unutsa), lekin javob shu
+# chegaradan qisqa bo'lsa -- xavfsizlik to'ri sifatida BUTUN javob ovozga
+# aylantiriladi (hali ham "qisqa" hisoblanadi). Uzun bo'lsa -- ovoz
+# YUBORILMAYDI (chala/noto'g'ri xulosa qilib ovoz yuborishdan ko'ra).
+_OVOZ_ZAXIRA_CHEGARA = 600
+
+OVOZLI_JAVOB_YONERGATMA = (
+    "\n\n(OVOZLI JAVOB YOQILGAN: javobing oxiriga albatta "
+    "[[OVOZ: <tabiiy, ogzaki, 1-3 gapli qisqa xulosa>]] belgisini qo'sh -- "
+    "bu alohida ovozli xabar sifatida ham yuboriladi, to'liq matningga "
+    "ta'sir qilmaydi. Agar javobing allaqachon qisqa (2-3 gapdan oshmasa) "
+    "bo'lsa, xuddi shu matnni ichiga qo'ysang bo'ladi. Uzun/texnik "
+    "javoblarda FAQAT asosiy xulosani ogzaki uslubda yoz (raqam/kod/yo'l "
+    "ro'yxatini emas).)"
+)
 
 
-def _whisper_yukla():
-    global _whisper_model
-    if _whisper_model is None:
-        from faster_whisper import WhisperModel
+def savolga_ovoz_yonergatmasini_qosh(matn: str) -> str:
+    """Har bir foydalanuvchi xabariga (ovozli javob sozlamasi YOQILGAN
+    bo'lsa) AI'ga ko'rsatma qo'shadi. Statik tizim-promptga (EXTRA) emas,
+    HAR SAFAR shu yerga qo'shiladi -- shunda sozlama (/ovoz yoq|ochir)
+    botni qayta ishga tushirmasdan DARHOL kuchga kiradi."""
+    if not ovozli_javob_yoqilganmi():
+        return matn
+    return (matn or "") + OVOZLI_JAVOB_YONERGATMA
 
-        modellar_dir = Path(__file__).parent / "transkripsiya" / "modellar"
-        _whisper_model = WhisperModel(
-            "small", device="cpu", compute_type="int8", download_root=str(modellar_dir)
+
+async def _ovozli_javob_yubor(msg, ovoz_matni: str):
+    """`matnni_ovozga` SINXRON (ichida `asyncio.run()` chaqiradi) -- shu
+    sabab ALBATTA thread-executor orqali, event loop'ni bloklamasdan
+    ishga tushiriladi. Xato bo'lsa (ffmpeg/tarmoq) FAQAT diag()ga yoziladi,
+    matnli javobga HECH QANDAY ta'sir qilmaydi (ovoz -- qo'shimcha, asosiy
+    emas)."""
+    if not ovoz_matni or not ovoz_matni.strip():
+        return
+    import tempfile
+
+    chiqish = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            chiqish = tmp.name
+        await asyncio.get_event_loop().run_in_executor(
+            None, matnni_ovozga, ovoz_matni.strip(), chiqish
         )
-    return _whisper_model
-
-
-def _whisper_bilan(fayl_yoli: str) -> str:
-    """Til ATAYLAB "uz" ga qattiq belgilangan — avtomatik til aniqlash ba'zan
-    noto'g'ri tilni (masalan fors) tanlab, butunlay tushunarsiz natija
-    berishi aniqlangan (2026-09-05)."""
-    model = _whisper_yukla()
-    segments, _info = model.transcribe(fayl_yoli, language="uz", beam_size=5)
-    return " ".join(s.text.strip() for s in segments).strip()
-
-
-def _google_bilan(fayl_yoli: str) -> str:
-    """Telegram OGG/Opus faylni ffmpeg orqali 16kHz mono WAV'ga o'girib,
-    Google'ning bepul Speech-to-Text web API'siga yuboradi. Internet talab
-    qiladi, ~2 soniyada javob beradi."""
-    import speech_recognition as sr
-
-    wav_yol = str(Path(fayl_yoli).with_suffix(".wav"))
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", fayl_yoli, "-ar", "16000", "-ac", "1", wav_yol],
-        check=True,
-        capture_output=True,
-    )
-    try:
-        r = sr.Recognizer()
-        with sr.AudioFile(wav_yol) as source:
-            audio = r.record(source)
-        return r.recognize_google(audio, language="uz-UZ").strip()
+        with open(chiqish, "rb") as f:
+            await msg.reply_voice(voice=f)
+        diag(f"Ovozli javob yuborildi ({len(ovoz_matni)} belgi matndan)")
+    except Exception as e:
+        diag(f"Ovozli javob yaratib/yuborib bo'lmadi: {e}")
     finally:
-        Path(wav_yol).unlink(missing_ok=True)
-
-
-def ovozni_matnga(fayl_yoli: str) -> str:
-    """Ovoz faylini o'zbekcha matnga o'giradi. Avval Google STT (tez, aniq),
-    ishlamasa (internet yo'q, timeout, ffmpeg xatosi va h.k.) mahalliy Whisper
-    "small" ga tushadi."""
-    try:
-        matn = _google_bilan(fayl_yoli)
-        if matn:
-            return matn
-    except Exception:
-        pass
-    return _whisper_bilan(fayl_yoli)
+        if chiqish and os.path.exists(chiqish):
+            try:
+                os.remove(chiqish)
+            except Exception:
+                pass
 
 
 async def deliver(msg, javob: str):
-    """Javobni yuboradi. [[YUBOR: yo'l]] belgilari bo'lsa, fayllarni ham."""
+    """Javobni yuboradi. [[YUBOR: yo'l]] belgilari bo'lsa, fayllarni ham.
+    [[OVOZ: ...]] bo'lsa (yoki sozlama yoqilgan va javob qisqa bo'lsa),
+    ovozli xabar sifatida HAM yuboradi -- to'liq matn esa HAR DOIM alohida,
+    o'zgarmagan holda ketadi."""
+    ovoz_match = OVOZ_RE.search(javob)
+    ovoz_matni = ovoz_match.group(1).strip() if ovoz_match else None
+    javob = OVOZ_RE.sub("", javob).strip()
+
     yollar = YUBOR_RE.findall(javob)
     matn = YUBOR_RE.sub("", javob).strip()
 
@@ -230,6 +318,12 @@ async def deliver(msg, javob: str):
                     await msg.reply_document(document=f, filename=yol.name)
         except Exception as e:
             await msg.reply_text(f"Faylni yuborib bo'lmadi ({yol.name}): {e}")
+
+    if ovozli_javob_yoqilganmi():
+        if not ovoz_matni and matn and len(matn) <= _OVOZ_ZAXIRA_CHEGARA:
+            ovoz_matni = matn
+        if ovoz_matni:
+            await _ovozli_javob_yubor(msg, ovoz_matni)
 
 
 @asynccontextmanager
@@ -277,6 +371,27 @@ async def esla(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Xotirani yangilashda xato yuz berdi.")
 
 
+async def ovoz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ovoz [yoq|ochir] -- 2026-10-11 (Azizbek buyrug'i): ovozli javob
+    sozlamasi. Argumentsiz -- joriy holatni ko'rsatadi. AI/Claude'ga
+    UMUMAN tegmaydi, deterministik (bot band bo'lsa ham ishlaydi)."""
+    if update.effective_user.id != OWNER_ID:
+        return
+    arg = (context.args[0].lower() if context.args else "").strip()
+    if arg in ("yoq", "yoqish", "yon", "on", "1"):
+        ovozli_javobni_ornat(True)
+        await update.message.reply_text("🔊 Ovozli javob YOQILDI -- bundan buyon javoblarga qisqa ovozli xabar ham qo'shiladi.")
+    elif arg in ("ochir", "ochirish", "off", "0", "yopish", "yop"):
+        ovozli_javobni_ornat(False)
+        await update.message.reply_text("🔇 Ovozli javob O'CHIRILDI -- faqat matnli javob keladi.")
+    else:
+        holat = "🔊 YOQILGAN" if ovozli_javob_yoqilganmi() else "🔇 O'CHIRILGAN"
+        await update.message.reply_text(
+            f"Ovozli javob holati: {holat}\n\n"
+            "Yoqish: /ovoz yoq\nO'chirish: /ovoz ochir"
+        )
+
+
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/stop — Telegram darajasida ushlanadi, SDK'ga UMUMAN yuborilmaydi
     (2026-09-26). Ataylab telegram-darajasidagi `lock`ni OLMAYDI — chunki
@@ -293,35 +408,29 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(javob)
 
 
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Faqat egasi bilan gaplashadi
-    if update.effective_user.id != OWNER_ID:
-        await update.message.reply_text("Kechirasiz, men shaxsiy yordamchiman.")
-        return
-
-    diag("xabar qabul qilindi")
-    text = update.message.text
+async def _matnni_jarvisga_yubor(msg, context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str):
+    """Tayyor matnni jarvis.ask()ga yuborib, javobni yetkazadi -- `handle()`
+    asosiy oqimi bilan BIR XIL mantiq (2026-10-09: "kontakt topilmadi" ->
+    "Ha, topshiriq sifatida bajar" tasdig'idan keyin ham shu funksiya
+    ishlatiladi, shunda ikki joyda bitta qoida takrorlanmaydi)."""
     jarvis: Jarvis = context.application.bot_data["jarvis"]
 
     if jarvis.is_busy:
-        # (c) "holat"/"tugatdingmi" kabi so'rovlarga NAVBATSIZ, darhol javob.
         if _holat_sorovimi(text):
-            await update.message.reply_text(jarvis.holat_matni())
+            await msg.reply_text(jarvis.holat_matni())
             return
-        # Joriy bajarilayotgan so'rov bilan AYNAN bir xil xabar qayta
-        # kelsa — qayta navbatga qo'yib ikki marta bajarmaymiz.
         joriy = (jarvis.current_request_text or "").strip()
         if text.strip() and text.strip() == joriy:
-            await update.message.reply_text("Bu allaqachon bajarilmoqda.")
+            await msg.reply_text("Bu allaqachon bajarilmoqda.")
             return
-        await update.message.reply_text(
+        await msg.reply_text(
             "⏳ Band — oldingi so'rovni bajarayapman, tugashi bilan shu xabaringizga javob beraman."
         )
 
-    xabar = _sdk_uchun_xavfsiz_matn(text)
-    on_hb = _heartbeat_callback(context, update.effective_chat.id)
+    xabar = savolga_ovoz_yonergatmasini_qosh(_sdk_uchun_xavfsiz_matn(text))
+    on_hb = _heartbeat_callback(context, chat_id)
 
-    async with lock, yozyapti(context, update.effective_chat.id):
+    async with lock, yozyapti(context, chat_id):
         band_belgila("telegram")  # pixel-ofis: Jarvis Telegramdan real so'rov ishlayapti
         try:
             javob = await jarvis.ask(xabar, on_heartbeat=on_hb)
@@ -330,8 +439,390 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         finally:
             bosh_belgila("telegram")
 
-    await deliver(update.message, javob)
+    await deliver(msg, javob)
     diag("foydalanuvchiga yuborildi")
+
+
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Faqat egasi bilan gaplashadi
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("Kechirasiz, men shaxsiy yordamchiman.")
+        return
+
+    diag("xabar qabul qilindi")
+    text = update.message.text
+
+    if text:
+        birlashgan = await _xabar_qismini_birlashtir(update.effective_chat.id, text)
+        if birlashgan is None:
+            return  # Telegram tomonidan bo'lingan xabarning davomi kutilmoqda
+        text = birlashgan
+
+    # "jamoa" buyrug'i (2026-09-27, Jarvis OS 1-bosqich) -- AI/Claude'ga
+    # UMUMAN tegmasdan, to'g'ridan-to'g'ri deterministik status-hisobotni
+    # qaytaradi (tez va ishonchli bo'lishi uchun). Jarvis band bo'lsa ham
+    # ishlaydi -- alohida modul, jarvis.ask()'ga hech qanday bog'liqligi yo'q.
+    if text and text.strip().lower() == "jamoa":
+        try:
+            from jarvis_jamoa_hisobot import jamoa_hisobot_matni
+            javob = jamoa_hisobot_matni()
+        except Exception as e:
+            javob = f"Jamoa hisobotini olishda xato: {e}"
+        await update.message.reply_text(javob, parse_mode="Markdown")
+        diag("jamoa hisoboti yuborildi")
+        return
+
+    # "<ism>ga ... deb yoz" (2026-09-28, Azizbek buyrug'i) -- Azizbekning
+    # shaxsiy Telegram akkaunti (userbot) orqali kontaktga xabar yuborish,
+    # tasdiq bilan. HUD ('/ask') BILAN BIR XIL bridge funksiyasiga boradi --
+    # ikkala joyda ham bitta qoida (5 soniya kutish, bekor, kunlik limit, log).
+    # 2026-11-06 TUZATISH: bridge (localhost:8090) javob bermay qolganda HAR
+    # bir xabar 170 s kechikardi. Endi bridge faqat "yoz/yubor" buyrug'iga
+    # o'xshagan matnda chaqiriladi; qolgan xabarlar darhol jarvis.ask()ga.
+    if text and _SHAXSIY_BUYRUQ_NAQSH.search(text):
+        try:
+            shaxsiy = await asyncio.to_thread(jxt.bridge_shaxsiy_buyruq, text)
+        except Exception:
+            shaxsiy = {"boshqa": True}
+        if not shaxsiy.get("boshqa"):
+            kt = shaxsiy.get("kontakt_topilmadi")
+            if kt:
+                # 2026-10-09 (Azizbek tuzatishi): kontakt topilmasa xabar
+                # ENDI yo'qolmaydi -- asl matn vaqtincha saqlanadi, Ha/Yo'q
+                # so'raladi; "Ha" bosilsa oddiy topshiriq sifatida
+                # jarvis.ask()ga yuboriladi.
+                hozir = datetime.now()
+                for eski in [k for k, v in _KONTAKT_TOPILMADI_KUTILMOQDA.items()
+                             if (hozir - v["vaqt"]).total_seconds() > 3600]:
+                    _KONTAKT_TOPILMADI_KUTILMOQDA.pop(eski, None)
+                tid = uuid.uuid4().hex[:10]
+                _KONTAKT_TOPILMADI_KUTILMOQDA[tid] = {
+                    "matn": kt.get("asli_matn") or text,
+                    "vaqt": hozir,
+                }
+                markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Ha, topshiriq sifatida bajar", callback_data=f"shxtha:{tid}"),
+                    InlineKeyboardButton("❌ Yo'q", callback_data=f"shxtyoq:{tid}"),
+                ]])
+                await update.message.reply_text(shaxsiy.get("javob", ""), reply_markup=markup)
+                diag("kontakt topilmadi -- topshiriq tasdig'i so'raldi")
+                return
+            sy = shaxsiy.get("shaxsiy_yozish")
+            markup = None
+            if sy:
+                markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Bekor", callback_data=f"shbekor:{sy['id']}"),
+                ]])
+            await update.message.reply_text(shaxsiy.get("javob", ""), reply_markup=markup)
+            diag("shaxsiy yozish buyrug'i ishlandi")
+            return
+
+    # "Ism, ..." murojaati (2026-09-28, Jarvis OS 1-bosqich) -- "Nozima, ...",
+    # "Sardor, ..." kabi xabarlar jarvis.ask()'ga UMUMAN tegmasdan, HUD
+    # panelidagi BILAN BIR XIL bridge dispatch'iga (/jamoa/savol) boradi.
+    # "Jarvis, ..." ATAYLAB bu yerga kirmaydi -- oddiy chat sifatida davom
+    # etadi (jxt.xodimga_murojaatmi shuni hisobga oladi).
+    murojaat = jxt.xodimga_murojaatmi(text) if text else None
+    if murojaat:
+        xodim_id, ichki_matn = murojaat
+        # Tanbeh/qoida ("Nozima, bundan keyin ...") -- AI/bridge'ga UMUMAN
+        # bormaydi, deterministik: qoidalar.md'ga yoziladi, xodim
+        # "Tushundim, ..." deb DARHOL tasdiqlaydi.
+        if jxq.tanbehmi(ichki_matn):
+            await _xodim_tanbehini_ishla(update, context, xodim_id, ichki_matn)
+            diag(f"'{xodim_id}'ga tanbeh yozildi")
+            return
+        if jxq.royxat_sorovimi(ichki_matn) or jxq.ochirish_sorovimi(ichki_matn) is not None:
+            await _xodim_qoidalarini_boshqar(update, context, xodim_id, ichki_matn)
+            diag(f"'{xodim_id}' qoidalari ko'rsatildi/o'chirildi")
+            return
+        await _xodim_murojaatini_ishla(update, context, xodim_id, ichki_matn)
+        diag(f"'{xodim_id}'ga murojaat ishlandi")
+        return
+
+    await _matnni_jarvisga_yubor(update.message, context, update.effective_chat.id, text)
+
+
+# ============================================================================
+# "Ism, ..." murojaati -- Jarvis OS 1-bosqich, band 1 (2026-09-28)
+# ============================================================================
+# 2026-09-28 kechqurun (Kamola/Instagram voqeasidan keyingi tuzatish): to'liq
+# texnik/batafsil matn endi caption/ovozga QO'SHILMAYDI -- xotirada vaqtincha
+# saqlanib, "📄 Batafsil" tugmasi bosilgandagina alohida xabar sifatida
+# yuboriladi. Oddiy dict, xotirada (mavjud `_topshiriqlar` naqshiga o'xshash) --
+# bot qayta ishga tushsa tozalanadi, bu YETARLI (eski tugmalar shunchaki
+# ishlamay qoladi, funksional muammo emas).
+_BATAFSIL_KESH: dict[str, str] = {}
+
+# 2026-09-28 (Azizbek buyrug'i, ovozli xabar sinovidan chiqqan holat):
+# STT ba'zan gap boshidagi "Jarvis" so'zini buzib eshitadi (masalan
+# "ijoves telegramdan Sanjar akaga salom deb yoz" -- aslida "Jarvis,
+# Telegramdan ..."). Bunday holatda `xodimga_murojaatmi()` hech kimga mos
+# kelmaydi va matn baribir jarvis.ask()ga tushadi (xavfsiz default) -- lekin
+# STT noaniq "ijoves..." so'zi savol matnida qolib ketmasligi uchun, gap
+# boshidagi so'z "jarvis"ga yaqin bo'lsa olib tashlanadi (aniq bilingan
+# eshitilish variantlari + umumiy o'xshashlik nisbati). Xodim ismlariga
+# (Nozima/Samandar/...) hech qachon mos kelmaydi -- ular bilan o'xshashlik
+# nisbati doim 0.35 dan past, shuning uchun 0.5 chegarasi xavfsiz.
+_JARVIS_ESHITILISH_VARIANTLARI = {
+    "jarvis", "ijoves", "jarvez", "jarves", "javis", "jorvis", "djarvis",
+    "jarvic", "harvis", "jarbis", "garvis", "jarvisga", "jarvisdan",
+}
+
+
+def _ovoz_matnidan_jarvis_murojaatini_olib_tashla(matn: str) -> str:
+    m = re.match(r"^\s*([A-Za-zʻʼ'`]+)\s*[,:\-–]?\s*(.+)$", matn.strip(), re.DOTALL)
+    if not m:
+        return matn
+    birinchi = m.group(1).strip().lower()
+    qolgan = m.group(2).strip()
+    if not qolgan:
+        return matn
+    moslik = birinchi in _JARVIS_ESHITILISH_VARIANTLARI or (
+        difflib.SequenceMatcher(None, birinchi, "jarvis").ratio() >= 0.5
+    )
+    if moslik:
+        diag(f"Ovozda 'Jarvis' murojaati aniqlandi (eshitilgan so'z: '{birinchi}') -- olib tashlandi.")
+        return qolgan
+    return matn
+
+
+async def _xodim_javobini_yubor(chat_id, context, xodim_id: str, ekran_matn: str,
+                                 ovoz_matn: str | None = None, reply_markup=None,
+                                 batafsil_matn: str | None = None):
+    """Bitta xodimning javobini ISM + RASM + OVOZ bilan yuboradi. Markdown/HTML
+    parse_mode ATAYLAB ishlatilmaydi (real ma'lumotda * _ kabi belgilar bo'lsa
+    parse xatosi bilan butun xabar yuborilmay qolishi mumkin edi -- oddiy
+    matn har doim ishonchli yetib boradi).
+
+    `ekran_matn` endi QISQA (bridge'dagi yangi "Azizbek aka, ..." uslubidagi)
+    javob -- oldin bu yerga UZUN texnik "ekran" matni berilar edi, bu TESKARI
+    edi (Kamola/Instagram voqeasi shu bilan bog'liq muammolardan biri). Agar
+    `batafsil_matn` berilgan bo'lsa, "📄 Batafsil" inline tugmasi qo'shiladi --
+    bosilganda to'liq matn ALOHIDA xabar sifatida yuboriladi."""
+    ism = jxt.xodim_nomi(xodim_id)
+    matn = f"{ism}:\n{ekran_matn}"
+
+    if batafsil_matn and batafsil_matn.strip():
+        kalit = uuid.uuid4().hex[:10]
+        _BATAFSIL_KESH[kalit] = batafsil_matn.strip()
+        batafsil_tugma = InlineKeyboardButton("📄 Batafsil", callback_data=f"batafsil:{kalit}")
+        mavjud_qatorlar = list(reply_markup.inline_keyboard) if reply_markup else []
+        reply_markup = InlineKeyboardMarkup(mavjud_qatorlar + [[batafsil_tugma]])
+
+    portret = jxt.portret_yoli(xodim_id)
+    if portret and len(matn) <= 1024:
+        with open(portret, "rb") as f:
+            await context.bot.send_photo(chat_id, photo=f, caption=matn, reply_markup=reply_markup)
+    else:
+        if portret:
+            with open(portret, "rb") as f:
+                await context.bot.send_photo(chat_id, photo=f)
+        await context.bot.send_message(chat_id, matn, reply_markup=reply_markup)
+
+    # Ovoz -- BONUS qatlam, xato bo'lsa ham asosiy javob (yuqorida) allaqachon
+    # yetib bo'lgan, shuning uchun bu yerda xato ko'tarilmaydi/ko'rsatilmaydi.
+    try:
+        mp3 = await asyncio.to_thread(jxt.bridge_speak_mp3, xodim_id, ovoz_matn or ekran_matn)
+        if mp3:
+            ogg = await asyncio.to_thread(jxt.mp3_ni_ogg_ga_otkaz, mp3)
+            if ogg:
+                await context.bot.send_voice(chat_id, voice=io.BytesIO(ogg))
+    except Exception:
+        pass
+
+
+async def _xodim_tanbehini_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                  xodim_id: str, matn: str):
+    """"Nozima, bundan keyin ..." -- AI/bridge ISHLATILMAYDI (deterministik,
+    tez, xato ehtimoli yo'q): qoidani faylga yozadi, xodim "Tushundim, ..."
+    deb tasdiqlaydi."""
+    chat_id = update.effective_chat.id
+
+    # 2026-09-28 (Azizbek tuzatishi): qoida MAZMUNI xavfsizlik/tasdiq
+    # mexanizmini chetlab o'tishga urinsa (masalan "tasdiqsiz yubor") --
+    # HECH QACHON saqlanmaydi, rad etiladi.
+    if not jxq.xavfsiz_qoidami(matn):
+        await update.message.reply_text(
+            "⚠️ Bu qoidani saqlay olmayman — xavfsizlik/tasdiq bosqichini "
+            "chetlab o'tishga urinish bor. Boshqacha qoida bering."
+        )
+        return
+
+    natija = jxq.qoida_qoshish(xodim_id, matn)
+    if natija != "ok":
+        await update.message.reply_text(
+            f"⚠️ {jxt.xodim_nomi(xodim_id)}ning qoida faylini yozishda xato: {natija}"
+        )
+        return
+    javob = f"Tushundim, bundan keyin {matn.strip().rstrip('.')}."
+    await _xodim_javobini_yubor(chat_id, context, xodim_id, javob, javob)
+
+
+async def _xodim_qoidalarini_boshqar(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                      xodim_id: str, matn: str):
+    """"Nozima, qoidalaringni ko'rsat" (ro'yxat) yoki "2-qoidani o'chir"
+    (o'chirish) -- AI/bridge ISHLATILMAYDI, deterministik (2026-09-28,
+    imtihon bandi 39)."""
+    chat_id = update.effective_chat.id
+    ism = jxt.xodim_nomi(xodim_id)
+
+    raqam = jxq.ochirish_sorovimi(matn)
+    if raqam is not None:
+        natija = jxq.qoida_ochir(xodim_id, raqam)
+        if natija == "ok":
+            javob = f"Tushundim, {raqam}-qoidani o'chirdim."
+        else:
+            javob = f"{raqam}-qoidani o'chira olmadim: {natija}"
+        await _xodim_javobini_yubor(chat_id, context, xodim_id, javob, javob)
+        return
+
+    royxat = jxq.qoidalar_royxati(xodim_id)
+    if not royxat:
+        javob = "Hozircha hech qanday qoidangiz yo'q."
+    else:
+        qatorlar = "\n".join(f"{i}. {q}" for i, q in enumerate(royxat, 1))
+        javob = f"{ism} uchun {len(royxat)} ta qoida bor:\n{qatorlar}"
+    await _xodim_javobini_yubor(chat_id, context, xodim_id, javob, javob)
+
+
+async def _xodim_murojaatini_ishla(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                    xodim_id: str, matn: str):
+    """"Nozima, ..." kabi xabarni bridge'ning /jamoa/savol'iga (HUD panelidagi
+    "ismga murojaat" bilan BIR XIL funksiya) yuboradi va natijani formatlab
+    Telegramga qaytaradi. Yo'naltirish/"ma'lumot yo'q"/tasdiq-navbat qoidalari
+    panel bilan AYNAN bir xil ishlaydi -- ikkinchi marta yozilmagan."""
+    chat_id = update.effective_chat.id
+    ism = jxt.xodim_nomi(xodim_id)
+    await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+    try:
+        data = await asyncio.to_thread(jxt.bridge_savol, xodim_id, matn)
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ {ism}ga murojaat qilishda xato: bridge (HUD server) javob bermadi ({e})."
+        )
+        return
+
+    if "error" in data:
+        await update.message.reply_text(f"⚠️ {ism}: {data['error']}")
+        return
+
+    # 2026-09-28 kechqurun tuzatish: bridge endi "javob" maydonida QISQA
+    # ("Azizbek aka, ..." uslubidagi) matnni qaytaradi -- shu ASOSIY
+    # matn/caption sifatida ishlatiladi (oldin bu yerda "ekran" -- uzun,
+    # texnik matn -- caption sifatida ishlatilar edi, bu TESKARI edi).
+    # To'liq texnik matn bo'lsa, "batafsil" maydonida keladi -- alohida
+    # "📄 Batafsil" tugmasi orqali ko'rsatiladi.
+    turi = data.get("turi")
+    if turi == "yonaltirildi":
+        await _xodim_javobini_yubor(chat_id, context, xodim_id, data.get("javob", ""), batafsil_matn=data.get("batafsil"))
+        yon = data.get("yonaltirilgan") or {}
+        egasi_id = yon.get("xodim")
+        if egasi_id:
+            await _xodim_javobini_yubor(chat_id, context, egasi_id, yon.get("ovoz", ""), batafsil_matn=yon.get("batafsil"))
+        return
+
+    if turi == "yozish":
+        task_id = data.get("id")
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"tasdiq:{task_id}"),
+            InlineKeyboardButton("❌ Bekor", callback_data=f"bekor:{task_id}"),
+        ]]) if task_id else None
+        await _xodim_javobini_yubor(chat_id, context, xodim_id, data.get("javob", ""), reply_markup=markup, batafsil_matn=data.get("batafsil"))
+        return
+
+    # "oqish" / "malumot_yoq" -- to'g'ridan-to'g'ri javob
+    await _xodim_javobini_yubor(chat_id, context, xodim_id, data.get("javob", ""), batafsil_matn=data.get("batafsil"))
+
+
+async def xodim_tugma_bosildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """[✅ Tasdiqlash] / [❌ Bekor] tugmalari -- xuddi HUD panelidagi
+    /jamoa/tasdiqlash yoki /jamoa/bekor_qilish'ni chaqiradi. Bajarilgan
+    topshiriq NATIJASI (bridge._topshiriq_bajar orqali) alohida, mavjud
+    telegram_xabar_yubor() bilan avtomatik keladi -- bu yerda faqat
+    tugmani "iste'mol qilish" (darhol javob berish + tahrirlash) kerak."""
+    query = update.callback_query
+    if update.effective_user.id != OWNER_ID:
+        await query.answer()
+        return
+    data = query.data or ""
+    if ":" not in data:
+        await query.answer()
+        return
+    amal, task_id = data.split(":", 1)
+
+    if amal == "tasdiq":
+        await query.answer("Tasdiqlandi, bajarilmoqda...")
+        natija = await asyncio.to_thread(jxt.bridge_tasdiqlash, task_id)
+        if "error" in natija:
+            await query.edit_message_reply_markup(reply_markup=None)
+            await context.bot.send_message(query.message.chat_id, f"⚠️ Tasdiqlashda xato: {natija['error']}")
+        else:
+            try:
+                await query.edit_message_caption(
+                    caption=(query.message.caption or "") + "\n\n⏳ Tasdiqlandi, bajarilmoqda...",
+                    reply_markup=None,
+                )
+            except Exception:
+                await query.edit_message_reply_markup(reply_markup=None)
+    elif amal == "bekor":
+        await query.answer("Bekor qilindi.")
+        natija = await asyncio.to_thread(jxt.bridge_bekor_qilish, task_id)
+        matn_qoshimcha = "\n\n❌ Bekor qilindi." if "error" not in natija else f"\n\n⚠️ Bekor qilishda xato: {natija['error']}"
+        try:
+            await query.edit_message_caption(
+                caption=(query.message.caption or "") + matn_qoshimcha,
+                reply_markup=None,
+            )
+        except Exception:
+            await query.edit_message_reply_markup(reply_markup=None)
+    elif amal == "shbekor":
+        # 2026-09-28: "<ism>ga ... deb yoz" -- shaxsiy Telegram (userbot)
+        # yuborishini bekor qilish (HUD'dagi ❌ Bekor bilan BIR XIL bridge
+        # endpointi).
+        await query.answer("Bekor qilindi.")
+        natija = await asyncio.to_thread(jxt.bridge_shaxsiy_bekor, task_id)
+        matn_qoshimcha = "\n\n❌ Bekor qilindi." if "error" not in natija else f"\n\n⚠️ Bekor qilishda xato: {natija['error']}"
+        try:
+            await query.edit_message_text((query.message.text or "") + matn_qoshimcha, reply_markup=None)
+        except Exception:
+            await query.edit_message_reply_markup(reply_markup=None)
+    elif amal in ("shxtha", "shxtyoq"):
+        # 2026-10-09: "'<ism>' nomiga mos kontakt topilmadi. Buni topshiriq
+        # sifatida bajarayinmi?" -- Ha/Yo'q. "Ha" bosilsa asl matn ODDIY
+        # topshiriq sifatida jarvis.ask()ga yuboriladi (xabar yo'qolmasin).
+        kutilayotgan = _KONTAKT_TOPILMADI_KUTILMOQDA.pop(task_id, None)
+        if amal == "shxtyoq" or not kutilayotgan:
+            await query.answer("Bekor qilindi." if kutilayotgan else "Bu so'rov eskirgan, qayta yozing.")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            return
+        await query.answer("Topshiriq sifatida bajarilmoqda...")
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await _matnni_jarvisga_yubor(query.message, context, query.message.chat_id, kutilayotgan["matn"])
+    elif amal == "batafsil":
+        # 2026-09-28 kechqurun tuzatish (Kamola/Instagram voqeasi) -- to'liq
+        # texnik matn asosiy xabarda EMAS, shu tugma bosilgandagina, ALOHIDA
+        # xabar sifatida yuboriladi. `task_id` bu yerda aslida `_BATAFSIL_KESH`
+        # kaliti (o'zgaruvchi nomi umumiy callback parse'idan meros -- amal
+        # nomidan keyingi qism har doim shunday ajratiladi).
+        kalit = task_id
+        matn = _BATAFSIL_KESH.get(kalit)
+        await query.answer()
+        if matn:
+            await context.bot.send_message(query.message.chat_id, f"📄 Batafsil:\n{matn}")
+        else:
+            await context.bot.send_message(
+                query.message.chat_id,
+                "⚠️ Batafsil matni topilmadi (bot qayta ishga tushgan bo'lishi mumkin).",
+            )
+    else:
+        await query.answer()
 
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -391,20 +882,42 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 matn = ""
             if matn:
+                # 2026-09-28: ovozli xabar ham "Ism, ..." murojaatini HUD/matn
+                # yo'li bilan BIR XIL tekshiradi ("Nozima, ...", "Samandar, ...")
+                # -- gap boshidagi so'z "Jarvis"ning buzilgan eshitilishi bo'lsa
+                # (masalan "ijoves") avval olib tashlanadi (pastdagi funksiya),
+                # shunda xato ravishda biror xodimga yoki savol matniga aralashib
+                # ketmaydi.
+                tuzatilgan_matn = _ovoz_matnidan_jarvis_murojaatini_olib_tashla(matn)
+                murojaat = jxt.xodimga_murojaatmi(tuzatilgan_matn)
+                if murojaat:
+                    xodim_id, ichki_matn = murojaat
+                    diag(f"Ovozli xabar xodimga yo'naltirildi: '{matn}' -> {xodim_id}")
+                    if jxq.tanbehmi(ichki_matn):
+                        await _xodim_tanbehini_ishla(update, context, xodim_id, ichki_matn)
+                        diag(f"'{xodim_id}'ga ovozli tanbeh yozildi")
+                    elif jxq.royxat_sorovimi(ichki_matn) or jxq.ochirish_sorovimi(ichki_matn) is not None:
+                        await _xodim_qoidalarini_boshqar(update, context, xodim_id, ichki_matn)
+                        diag(f"'{xodim_id}' qoidalari ovozli so'rovda ko'rsatildi/o'chirildi")
+                    else:
+                        await _xodim_murojaatini_ishla(update, context, xodim_id, ichki_matn)
+                        diag(f"'{xodim_id}'ga ovozli murojaat ishlandi")
+                    return
                 savol = (
                     "(Bu — Azizbekning ovozli xabari, avtomatik ravishda matnga "
                     "o'girildi. Transkripsiya ba'zan noaniq/xato chiqishi mumkin — "
                     "agar matn mantiqsiz yoki tushunarsiz ko'rinsa, taxmin qilib ish "
                     "qilaverma, aniq nima demoqchi bo'lganini so'ra.)\n\n"
-                    f"{matn}"
+                    f"{tuzatilgan_matn}"
                 )
             else:
-                savol = (
-                    "Azizbek ovozli xabar yubordi, lekin avtomatik matnga o'girish "
-                    "muvaffaqiyatsiz bo'ldi (bo'sh natija chiqdi — ehtimol ovoz juda "
-                    "past yoki fayl buzilgan). Undan matn yozib yuborishni yoki "
-                    "qayta gapirib ko'rishni so'ra."
-                )
+                # 2026-09-28 (Azizbek tuzatishi, imtihon bandi 55): bo'sh/
+                # tushunarsiz STT natijasi AI'ga UMUMAN yuborilmaydi (sekin +
+                # keraksiz xarajat) -- to'g'ridan-to'g'ri, deterministik
+                # javob, hech narsa (xodimga ham) yuborilmaydi.
+                await update.message.reply_text("Eshitmadim, qayta ayting.")
+                diag("bo'sh STT natijasi — 'Eshitmadim' javobi, AI chaqirilmadi")
+                return
         else:
             izoh = msg.caption or "Izoh yo'q."
             savol = (
@@ -417,6 +930,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         jarvis: Jarvis = context.application.bot_data["jarvis"]
         on_hb = _heartbeat_callback(context, update.effective_chat.id)
+        savol = savolga_ovoz_yonergatmasini_qosh(savol)
         async with lock:
             band_belgila("telegram")  # pixel-ofis: Jarvis Telegramdan real so'rov ishlayapti
             try:
@@ -440,7 +954,73 @@ async def _heartbeat():
         await asyncio.sleep(30)
 
 
+# --- jarvis_watchdog.py uchun heartbeat (2026-09-27, Azizbek buyrug'i) ---
+# `heartbeat_jarvis.json` — ai_expert_bot/jetcafe_bot'dagi BIR XIL to'g'ri
+# mezon: `last_ok` FAQAT `get_me()` muvaffaqiyatli VA `app.updater.running`
+# bo'lganda yangilanadi (network-ok yolg'iz yetarli emas). MUHIM: bu FAQAT
+# `post_init`da `app.create_task()` bilan ishga tushirilgan, ALOHIDA asyncio
+# task — Telegram xabarini qayta ishlovchi `handle()`dagi `lock` (bu
+# `jarvis.ask()` 40 daqiqagacha davom etishi mumkin bo'lgan uzoq vazifalarda
+# band bo'ladi) bilan HECH QANDAY bog'liqligi yo'q. PTB'ning polling
+# (`app.updater`) o'zi ham `concurrent_updates(True)` bilan handler'lardan
+# mustaqil ishlaydi — shuning uchun Jarvis uzoq ish bilan band bo'lsa ham
+# (masalan 15-40 daqiqalik vazifa) bu heartbeat TO'XTAMAYDI, watchdog buni
+# "qotib qolish" deb noto'g'ri talqin qilmaydi.
+_HEARTBEAT_JARVIS_FAYL = Path(__file__).resolve().parent / (
+    "heartbeat_jarvis_sinov.json" if _SINOV else "heartbeat_jarvis.json"
+)
+_heartbeat_jarvis_holat = {"last_ok": None}
+
+
+def _heartbeat_jarvis_yoz() -> None:
+    try:
+        yozuv = {
+            "heartbeat_vaqti": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_ok": _heartbeat_jarvis_holat["last_ok"],
+        }
+        _HEARTBEAT_JARVIS_FAYL.write_text(json.dumps(yozuv, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        diag(f"Watchdog heartbeat faylga yozib bo'lmadi: {e}")
+
+
+async def _watchdog_heartbeat_bir_marta(app: Application) -> None:
+    tarmoq_ok = False
+    try:
+        await app.bot.get_me()
+        tarmoq_ok = True
+    except (TelegramError, Exception) as e:
+        diag(f"Watchdog heartbeat: Telegram bilan aloqa muvaffaqiyatsiz: {e}")
+
+    polling_ok = bool(app.updater and app.updater.running)
+    if not polling_ok:
+        diag("Watchdog heartbeat: app.updater.running=False -- polling to'xtagan (last_ok yangilanmaydi).")
+
+    if tarmoq_ok and polling_ok:
+        _heartbeat_jarvis_holat["last_ok"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _heartbeat_jarvis_yoz()
+
+
+async def _watchdog_heartbeat_aylanish(app: Application) -> None:
+    """Cheksiz sikl -- har 60 soniyada, `handle()`dagi `lock`dan MUSTAQIL
+    ravishda ishlaydi (band/bo'sh holatidan qat'i nazar)."""
+    while True:
+        try:
+            await _watchdog_heartbeat_bir_marta(app)
+        except Exception as e:
+            diag(f"Watchdog heartbeat aylanishida kutilmagan xato: {e}")
+        await asyncio.sleep(60)
+
+
 async def post_init(app: Application):
+    # 2026-09-27 TUZATISH: watchdog-heartbeat ENG BIRINCHI ishga tushiriladi --
+    # `jarvis.__aenter__()` (Claude Agent SDK ulanishi, xotira yuklash va h.k.)
+    # bir necha daqiqa cho'zilishi mumkin; agar heartbeat shundan KEYIN
+    # boshlansa, shu davrda heartbeat_jarvis.json UMUMAN yozilmaydi va
+    # watchdog buni xato ravishda "muammo" deb talqin qilib, hali to'liq
+    # ishga tushmagan Jarvisni o'ldirib qo'yishi mumkin edi (2026-09-27,
+    # 15:32'da aynan shu bo'ldi). Bu task faqat `app.bot`/`app.updater`ga
+    # muhtoj, `jarvis`ga bog'liq emas -- shuning uchun undan oldin xavfsiz.
+    app.create_task(_watchdog_heartbeat_aylanish(app))
     jarvis = Jarvis(extra_prompt=EXTRA, confirm_fn=auto_approve)
     await jarvis.__aenter__()
     app.bot_data["jarvis"] = jarvis
@@ -480,6 +1060,7 @@ def main():
     )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("esla", esla))
+    app.add_handler(CommandHandler("ovoz", ovoz_cmd))
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(
         MessageHandler(
@@ -492,6 +1073,7 @@ def main():
         )
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    app.add_handler(CallbackQueryHandler(xodim_tugma_bosildi))
 
     print("Telegram bot ishga tushdi. To'xtatish: Ctrl+C")
     try:

@@ -54,14 +54,21 @@ def _yoz(ishlar: list) -> None:
         pass
 
 
-def royxatga_ol(agent: str, vazifa: str, papka: str) -> str:
+def royxatga_ol(agent: str, vazifa: str, papka: str, ish_id: str | None = None) -> str:
     """Yangi fon-ish/uzoq so'rov boshlanganda chaqiriladi.
     Keyinroq holatni_yangila()/royxatdan_ochir() uchun kerak bo'ladigan
     ID qaytaradi. Xato bo'lsa ham bo'sh string emas, tasodifiy ID qaytaradi
     (chaqiruvchi kodni murakkablashtirmaslik uchun — yozish jim
     muvaffaqiyatsiz bo'lishi mumkin, lekin chaqiruvchi doim ID bilan davom
-    eta oladi)."""
-    ish_id = uuid.uuid4().hex[:12]
+    eta oladi).
+
+    `ish_id` (2026-09-27, avtomatik fon-agent kuzatuvi uchun) -- berilsa
+    o'zi ID generatsiya qilmaydi, CHAQIRUVCHI bergan ID'ni ishlatadi (masalan
+    SDK'ning SubagentStart hook'idagi `agent_id` -- shu bilan keyinchalik
+    SubagentStop hook'i AYNAN shu ID bilan `royxatdan_ochir()` chaqira oladi,
+    alohida moslashtirish kerak bo'lmaydi)."""
+    if ish_id is None:
+        ish_id = uuid.uuid4().hex[:12]
     try:
         ishlar = _oqi()
         ishlar.append(
@@ -108,8 +115,42 @@ def royxatni_oqi() -> list:
     return _oqi()
 
 
+# 2026-09-27 (Azizbek talabi bilan restart-himoyasi qo'shilganda topildi):
+# jarayon O'ZI (ungraceful -- masalan tashqi kill/qulash) o'chib qolsa,
+# `royxatdan_ochir()` (finally blok) ISHGA TUSHMAYDI -- yozuv "ishlayapti"
+# holatda ABADIY qolib ketadi. Bunday "chirigan" yozuv haqiqiy fon-agent
+# yo'q bo'lsa ham restartni CHEKSIZ bloklab qo'yishi mumkin edi (aynan shu
+# fayl darajasida sinov paytida haqiqiy misoli topildi: 18:28'dan qolgan
+# yozuv). Shu sabab: `jarvis_core.py`dagi MAX_ASK_TIMEOUT_S (2 soat) hech
+# qachon oshmasligi kerak bo'lgan qattiq zaxira chegara -- shundan 1.5x
+# ko'proq (3 soat) "ishlayapti" bo'lib turgan yozuv ANIQ chirigan deb
+# hisoblanadi va "faol" deb hisoblanmaydi (lekin fayldan o'chirilmaydi --
+# ko'rinib turishi, keyin qo'lda tekshirilishi mumkin).
+ESKIRISH_CHEGARASI_SONIYA = 3 * 60 * 60  # 3 soat
+
+
 def faol_ishlar() -> list:
-    return [x for x in _oqi() if x.get("holat") == "ishlayapti"]
+    natija = []
+    for x in _oqi():
+        if x.get("holat") != "ishlayapti":
+            continue
+        # 2026-09-27 (sinov paytida topilgan xato): "telegram" -- Jarvisning
+        # ASOSIY jarayoni har bir ask() paytida shu yerga o'zini yozadi
+        # (jarvis_core.py:1163), demak deyarli DOIM "ishlayapti" bo'ladi --
+        # bu esa restart-himoyasini har doim ishga tushirib qo'yardi (chunki
+        # ayni restart buyrug'ini yuborayotgan SUHBATNING O'ZI ham shu yozuv
+        # hisoblanadi). Restart-himoyasi faqat HAQIQIY fon-agentlarni
+        # (subagent:*) sanashi kerak -- asosiy telegram yozuvi bloklamasin.
+        if x.get("agent") == "telegram":
+            continue
+        try:
+            boshlangan = time.mktime(time.strptime(x["boshlangan_vaqt"], "%Y-%m-%d %H:%M:%S"))
+            if time.time() - boshlangan > ESKIRISH_CHEGARASI_SONIYA:
+                continue  # chirigan yozuv -- faol deb hisoblanmaydi
+        except Exception:
+            pass  # sana parse bo'lmasa -- ehtiyot bo'lib baribir faol deb hisoblaymiz
+        natija.append(x)
+    return natija
 
 
 def ogohlantirish_matni() -> str:

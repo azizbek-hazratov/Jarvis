@@ -18,6 +18,7 @@ bo'lganda Read bilan o'qiladi):
 import asyncio
 import re
 import sys
+import time
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +59,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
     PermissionResultAllow,
     PermissionResultDeny,
+    HookMatcher,
 )
 
 import jarvis_fon_ishlar as _fon_ishlar
@@ -321,10 +323,47 @@ def holat_sorovimi(text: str) -> bool:
     return any(kalit in past for kalit in HOLAT_SOROVI_KALIT_SOZLAR)
 
 
+# 2026-09-27 (XAVFSIZLIK, Azizbek SHOSHILINCH topgan): heartbeat/holat xabari
+# oxirgi bajarilgan vositaning XOM kirishini (masalan Bash buyrug'ining o'zini)
+# ko'rsatgani uchun, agar o'sha buyruqda parol/token/kalit bo'lsa — bu
+# Telegram'ga OCHIQ ketib qolar edi (real holat: HUD_TOKEN shu yo'l bilan
+# Telegram heartbeat xabarida ko'rinib qoldi). Shu sabab `_tool_qadam_matni()`
+# qaytargan HAR QANDAY matn pastdagi `_maxfiylikni_yashir()` orqali
+# QAYTARISHDAN OLDIN filtrlanadi — bu heartbeat (`_heartbeat_sikli`),
+# `holat_matni()` VA `_majburan_toxtat()`ning barchasini BIR JOYDAN
+# himoyalaydi (uchalasi ham shu funksiyaning natijasiga tayanadi).
+_MAXFIY_KALIT_NAQSH = re.compile(
+    r"(?i)(\b[\w-]*(?:token|parol|password|passwd|pwd|secret|api[_-]?key|"
+    r"access[_-]?key|auth[_-]?key|key)[\w-]*)(\s*[:=]\s*)"
+    r"(\"[^\"]*\"|'[^']*'|[^\s'\"&;,]+)"
+)
+_BEARER_NAQSH = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}")
+_SK_NAQSH = re.compile(r"\bsk-[A-Za-z0-9]{6,}")
+# Kalit so'zsiz ham uchrashi mumkin bo'lgan "xom" uzun hex qator (masalan
+# HUD_TOKEN'ning o'zi, 48 ta hex belgi) — harf+raqam aralash, pastki chiziqsiz,
+# 20+ belgili ketma-ketlik. Fayl/funksiya nomlari odatda "_" bilan bo'lingani
+# uchun bular bilan chalkashmaydi.
+_UZUN_HEX_NAQSH = re.compile(r"\b[0-9a-fA-F]{20,}\b")
+
+
+def _maxfiylikni_yashir(matn: str) -> str:
+    """`token=...`, `parol: ...`, `Bearer ...`, `sk-...` va xom uzun hex
+    qatorlarni `***` bilan almashtiradi. Hech qanday maxfiy naqsh topilmasa
+    matn o'zgarishsiz qaytadi."""
+    if not matn:
+        return matn
+    natija = _MAXFIY_KALIT_NAQSH.sub(lambda m: f"{m.group(1)}{m.group(2)}***", matn)
+    natija = _BEARER_NAQSH.sub("Bearer ***", natija)
+    natija = _SK_NAQSH.sub("sk-***", natija)
+    natija = _UZUN_HEX_NAQSH.sub("***", natija)
+    return natija
+
+
 def _tool_qadam_matni(block: "ToolUseBlock") -> str:
     """Heartbeat/holat xabari uchun: oxirgi ishlatilgan vositaning qisqa,
     o'qish mumkin bo'lgan tavsifi (masalan 'Bash — npm test', 'Read —
-    D:\\...\\server.js')."""
+    D:\\...\\server.js'). Maxfiy qiymatlar (token/parol/key/Bearer/uzun hex)
+    HAR DOIM *** bilan yashiriladi (pastga qarang)."""
     nomi = getattr(block, "name", "vosita")
     kirish = getattr(block, "input", None) or {}
     tafsilot = ""
@@ -337,6 +376,7 @@ def _tool_qadam_matni(block: "ToolUseBlock") -> str:
     except Exception:
         pass
     tafsilot = tafsilot.replace("\n", " ").strip()
+    tafsilot = _maxfiylikni_yashir(tafsilot)
     if len(tafsilot) > 100:
         tafsilot = tafsilot[:100] + "…"
     return f"{nomi}" + (f" — {tafsilot}" if tafsilot else "")
@@ -477,6 +517,40 @@ def _read_memory(budget: int = MEM_BUDGET) -> str:
     return "\n\n".join(bloklar)
 
 
+JORIY_ISH_FAYLI = MEM_DIR / "joriy_ish.md"
+
+
+def _joriy_ish_holati() -> str:
+    """Uzun/ko'p bosqichli ish (deploy, migratsiya) davomida yozilgan
+    xotira/joriy_ish.md holatini qaytaradi -- bo'sh bo'lmasa, yangi sessiya
+    buni ENG BIRINCHI navbatda Azizbekka aytishi kerak (2026-09-27, uzilishdan
+    keyin davom etish qoidasi)."""
+    try:
+        matn = JORIY_ISH_FAYLI.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return "(bo'sh -- oldingi tugallanmagan ish yo'q)"
+    if not matn:
+        return "(bo'sh -- oldingi tugallanmagan ish yo'q)"
+    return matn
+
+
+VOSITALAR_FAYLI = Path(r"D:\jarvis-os\vositalar.md")
+
+
+def _vositalar_royxati() -> str:
+    """D:\\jarvis-os\\vositalar.md -- Jarvisning BARCHA imkoniyatlari (yubor.py,
+    monitor, jarvis_readonly SQL, brauzer, desktop, Gmail va h.k.) va ularni
+    QACHON ishlatish (2026-09-28, Azizbek buyrug'i: bir marta HUD'da
+    "kontakt yo'q" deb noto'g'ri javob berilgani uchun -- "bunday imkoniyatim
+    yo'q" deyishdan OLDIN shu ro'yxat albatta tekshiriladi). Fayl yo'q/bo'sh
+    bo'lsa jim o'tkazib yuboriladi (prompt buzilmasin)."""
+    try:
+        matn = VOSITALAR_FAYLI.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+    return matn
+
+
 def _recent_days(n: int = 5) -> str:
     """Oxirgi kunlardagi suhbat fayllari ro'yxati."""
     _ensure_dirs()
@@ -554,6 +628,18 @@ Shuning uchun har safar javob yozishdan oldin:
    va navbat bilan javob olishi shart — birontasi ham "band edim" deb
    tushib qolmasligi yoki javobsiz qolmasligi kerak.
 
+OLDINGI ISH HOLATI (avtomatik tekshiruv, 2026-09-27 qoidasi — uzilishdan keyin
+davom etish uchun) — xotira/joriy_ish.md hozirgi holati:
+{_joriy_ish_holati()}
+Agar yuqorida "(bo'sh...)" YOZILMAGAN bo'lsa (ya'ni fayl bo'sh emas) — bu
+oldingi sessiya uzun/ko'p bosqichli ishni (deploy, migratsiya va h.k.)
+TUGATMASDAN uzilgan degani. Bunday holatda ENG BIRINCHI navbatda, Azizbekning
+xabariga javob berishdan OLDIN, unga aniq shu formatda xabar ber: "Oldingi ish
+qolib ketgan: <fayldagi oxirgi qadam va keyingi qadam qisqacha>" — keyin
+davom etish kerakmi so'ra yoki agar aniq bo'lsa davom ettir. Uzun ishni har
+bosqichda shu faylga (vaqt + tugagan qadam + keyingi qadam, bitta qator) yozib
+bor, ish TO'LIQ tugagach faylni BO'SHAT (tozala).
+
 SENDA NIMA BOR (aniq ro'yxat — bundan tashqarisini da'vo qilma)
 - Read / Write / Edit — kompyuterdagi istalgan faylni o'qish va yozish
 - Glob / Grep — fayl va matn qidirish
@@ -587,6 +673,16 @@ SENDA NIMA YO'Q
   Shopify, Microsoft 365 — bular hali ulanmagan/needs-auth) ulanmagansan.
 - Bularni bor deb aytma. Kerak bo'lsa, Bash orqali kerakli dasturni
   o'rnatib, o'zing hal qil.
+
+VOSITALAR RO'YXATI — "yo'q" demasdan OLDIN shu yerni tekshir
+Yuqoridagi "SENDA NIMA BOR/YO'Q" faqat QISQA xulosa. To'liq ro'yxat —
+D:\\jarvis-os\\vositalar.md faylida: har bir skript/vosita (masalan shaxsiy
+Telegram akkaunti orqali kontaktga yozish, SQL orqali biznes ma'lumot
+o'qish va h.k.) va uni QACHON ishlatish shu yerda yozilgan (2026-09-28,
+Azizbek buyrug'i — bir marta "bunday imkoniyatim yo'q" deb NOTO'G'RI javob
+berilgani uchun qo'shildi). Notanish so'rov kelsa, javob berishdan OLDIN
+albatta shu matnni diqqat bilan o'qi:
+{_vositalar_royxati() or "(hali yaratilmagan -- D:\\jarvis-os\\vositalar.md)"}
 
 FAYL FORMATLARI
 Read vositasi faqat oddiy matn va rasm fayllarini ocha oladi.
@@ -732,8 +828,38 @@ XAVFLI_BUYRUQLAR = [
 ]
 
 
+# 2026-10-23: fon kuzatuv/rejalashtirish vositalari ask() tugagandan KEYIN
+# o'z-o'zidan yangi tur ("eski kuzatuv signali") yaratib, javoblarni bir
+# xabarga siljitib yuborardi. Telegram bot savol-javob rejimida ishlaydi --
+# bunday vositalar bu yerda kerak emas.
+FON_VOSITALAR_TAQIQ = {"Monitor", "ScheduleWakeup", "CronCreate", "RemoteTrigger"}
+ESKI_TUR_CHEGARASI_S = 1.5
+# 2026-11-05: eski tur tashlangandan keyin yangi tur shuncha soniyada
+# boshlanmasa - osilish deb hisoblanadi (oldin 2 soat kutilardi).
+KEYINGI_TUR_KUTISH_S = 300
+# Darhol qaytgan qisqa javob shu naqshga mos kelsa - bu "eski tur" emas,
+# Claude CLI xatosi (limit, login, API) -> foydalanuvchiga ko'rsatiladi.
+_XATO_JAVOB_NAQSH = re.compile(
+    r"(?i)(hit your .*limit|limit.*reset|usage limit|rate.?limit|/login|"
+    r"api error|invalid api key|credit balance|oauth|unauthori[sz]ed|"
+    r"authenticat|overloaded|not logged in|session expired|forbidden)"
+)
+
+
 async def auto_approve(tool_name, input_data, context):
     """Buyruqlarni o'zi bajaradi, faqat halokatli buyruqlarni rad etadi."""
+    if tool_name in FON_VOSITALAR_TAQIQ:
+        return PermissionResultDeny(
+            message=(
+                "Fon kuzatuv/rejalashtirish vositalari Telegram rejimida o'chirilgan. "
+                "Natijani shu javob ichida kutib ol (sinxron Bash bilan, kerak bo'lsa "
+                "sleep + qayta tekshirish)."
+            )
+        )
+    if tool_name in ("Agent", "Task") and input_data.get("run_in_background"):
+        input_data = dict(input_data)
+        input_data["run_in_background"] = False
+        return PermissionResultAllow(updated_input=input_data)
     if tool_name == "Bash":
         cmd = input_data.get("command", "")
         for naqsh in XAVFLI_BUYRUQLAR:
@@ -769,6 +895,44 @@ async def _confirm_deny(tool_name, input_data, context):
     return PermissionResultDeny(
         message="Bu vositani ishlatish uchun ruxsat yo'q."
     )
+
+
+# ---------------- Fon-agent avtomatik ro'yxatga olish (2026-09-27) ----------------
+# Sabab (Azizbek buyrug'i, real near-miss'dan keyin): qo'lda
+# jarvis_fon_ishlar.royxatga_ol()/royxatdan_ochir() chaqirishga TAYANIB
+# bo'lmaydi -- unutish oson. SDK'ning o'z SubagentStart/SubagentStop
+# hook'lari (Agent/Task tool orqali ochilgan HAR BIR subagent uchun
+# avtomatik chaqiriladi, forgotten/qo'lda yozishga ehtiyoj qoldirmaydi)
+# ishlatiladi. `agent_id` ikkalasida ham BIR XIL bo'lgani uchun
+# (SDK kafolati) fon-ishlar.json yozuvining ID'si sifatida to'g'ridan-to'g'ri
+# shu ishlatiladi -- start/stop orasida moslashtirish/xarita saqlash shart
+# emas. Hook xato tashlasa ham asosiy oqimni buzmasligi uchun try/except
+# bilan o'ralgan (jarvis_fon_ishlar.py'ning o'zi ham jim-muvaffaqiyatsiz
+# falsafasiga amal qiladi, lekin bu yerda ikki barobar himoyalanadi).
+async def _subagent_start_hook(input_data, tool_use_id, context):
+    try:
+        agent_id = input_data.get("agent_id")
+        agent_type = input_data.get("agent_type", "?")
+        if agent_id:
+            _fon_ishlar.royxatga_ol(
+                f"subagent:{agent_type}",
+                f"'{agent_type}' turidagi fon-agent ishga tushdi",
+                str(BASE_DIR),
+                ish_id=agent_id,
+            )
+    except Exception:
+        pass
+    return {}
+
+
+async def _subagent_stop_hook(input_data, tool_use_id, context):
+    try:
+        agent_id = input_data.get("agent_id")
+        if agent_id:
+            _fon_ishlar.royxatdan_ochir(agent_id)
+    except Exception:
+        pass
+    return {}
 
 
 # ---------------- Ochiq savol holati (kod darajasidagi tekshiruv) ----------------
@@ -833,6 +997,13 @@ class Jarvis:
             # Standart 1MB bufer katta sahifa matni/HTML uchun yetmaydi
             # ("JSON message exceeded maximum buffer size" xatosi) — kattalashtiramiz.
             max_buffer_size=25 * 1024 * 1024,
+            # 2026-09-27: Agent/Task tool orqali ochilgan har bir fon-subagent
+            # avtomatik fon-ishlar.json'ga yozilishi/o'chirilishi uchun
+            # (qo'lda yozishga tayanmaslik -- yuqoridagi _subagent_*_hook izohi).
+            hooks={
+                "SubagentStart": [HookMatcher(hooks=[_subagent_start_hook])],
+                "SubagentStop": [HookMatcher(hooks=[_subagent_stop_hook])],
+            },
         )
         self._options = ClaudeAgentOptions(**options_kwargs)
         self._client = None
@@ -981,19 +1152,92 @@ class Jarvis:
         await self._client.connect()
         return majburan_oldirildi, toxtatilgan_avlodlar
 
+    # 2026-10-23 TUZATISH ("bir xabar orqada qolish" xatosi): diagnostika.log
+    # isboti -- "so'rov yuborildi" 09:56:00.189 -> "javob keldi" 09:56:00.201
+    # (12 ms!). Ya'ni receive_response() YANGI savolga javobni emas, oqimda
+    # OLDINDAN turib qolgan ESKI turni (fon kuzatuv signaliga yozilgan javob)
+    # qaytargan; haqiqiy javob esa keyingi xabarga "siljib" ketgan. Ikki qavat
+    # himoya: (1) query'dan oldin oqimdagi eski xabarlar tashlanadi,
+    # (2) query'dan keyin ~1.5 s ichida tugagan tur -- bu savolga javob
+    # bo'lishi fizik jihatdan mumkin emas -- tashlanib, keyingi tur o'qiladi.
+    def _eski_xabarlarni_tozala(self) -> int:
+        q = getattr(self._client, "_query", None)
+        oqim = getattr(q, "_message_receive", None)
+        if oqim is None:
+            return 0
+        n = 0
+        while n < 10000:
+            try:
+                oqim.receive_nowait()
+            except Exception:
+                break
+            n += 1
+        if n:
+            diag(f"oqimda qolib ketgan {n} ta eski xabar tashlandi")
+        return n
+
     async def _run(self, text: str, on_chunk=None) -> str:
+        # 2026-11-05 TUZATISH ("2 soatlik jim osilish" xatosi): Claude CLI
+        # limit/auth/API xatosini darhol (1.5 s ichida) qisqa matn sifatida
+        # qaytarganda, 2026-10-23 dagi "eski tur" himoyasi uni tashlab
+        # yuborib, hech qachon kelmaydigan keyingi turni 2 soat kutardi
+        # (diagnostika.log: "eski tur tashlandi (72 belgi)" -> 7200s).
+        # Endi: (1) tashlangan matn logga yoziladi, (2) xato/limit naqshiga
+        # mos kelsa darhol foydalanuvchiga qaytariladi, (3) tur tashlangandan
+        # keyin KEYINGI_TUR_KUTISH_S ichida yangi xabar kelmasa - osilish deb
+        # hisoblanib, foydalanuvchiga ogohlantirish qaytariladi.
         parts: list[str] = []
         self._partial_parts = parts
+        self._eski_xabarlarni_tozala()
         await self._client.query(text)
-        async for message in self._client.receive_response():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        parts.append(block.text)
-                        if on_chunk:
-                            on_chunk(block.text)
-                    elif isinstance(block, ToolUseBlock):
-                        self._last_step = _tool_qadam_matni(block)
+        boshlandi = time.monotonic()
+        tashlanganlar: list[str] = []
+        for _urinish in range(20):
+            tur_qismlari: list[str] = []
+            oqim = self._client.receive_response().__aiter__()
+            birinchi_xabar = True
+            while True:
+                try:
+                    if birinchi_xabar and tashlanganlar:
+                        message = await asyncio.wait_for(
+                            oqim.__anext__(), timeout=KEYINGI_TUR_KUTISH_S
+                        )
+                    else:
+                        message = await oqim.__anext__()
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    oxirgi = _maxfiylikni_yashir(" | ".join(tashlanganlar))[:300]
+                    diag(f"{KEYINGI_TUR_KUTISH_S}s ichida yangi tur kelmadi - osilish, to'xtatildi")
+                    return (
+                        "\u26a0\ufe0f Claude javob bermayapti (so'rov osilib qoldi). "
+                        f"Claude'dan kelgan yagona xabar: \u00ab{oxirgi}\u00bb. "
+                        "Limitni / login holatini tekshiring."
+                    )
+                birinchi_xabar = False
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            tur_qismlari.append(block.text)
+                            parts.append(block.text)
+                            if on_chunk:
+                                on_chunk(block.text)
+                        elif isinstance(block, ToolUseBlock):
+                            self._last_step = _tool_qadam_matni(block)
+            if time.monotonic() - boshlandi >= ESKI_TUR_CHEGARASI_S:
+                break
+            # Juda tez tugagan tur -- eski (boshqa savolga tegishli) javob
+            # YOKI darhol qaytgan xato/limit xabari.
+            tur_matni = "".join(tur_qismlari).strip()
+            diag(
+                f"eski tur tashlandi ({len(tur_matni)} belgi): "
+                f"{_maxfiylikni_yashir(tur_matni[:200])!r}"
+            )
+            del parts[len(parts) - len(tur_qismlari):]
+            if _XATO_JAVOB_NAQSH.search(tur_matni):
+                diag("tashlangan tur XATO/LIMIT xabari - foydalanuvchiga qaytarildi")
+                return f"\u26a0\ufe0f Claude xatosi: {_maxfiylikni_yashir(tur_matni)}"
+            tashlanganlar.append(tur_matni)
         return "".join(parts)
 
     async def _heartbeat_sikli(self, on_heartbeat) -> None:
