@@ -1,0 +1,372 @@
+{
+  "ishlar": [
+    {
+      "id": "724e7bbf723e",
+      "agent": "telegram",
+      "vazifa": "buni qil",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-09-27 22:20:57",
+      "holat": "tugadi"
+    },
+    {
+      "id": "c38064b64915",
+      "agent": "telegram",
+      "vazifa": "Rahmat, Ish 1 qabul. Batafsil tugmasini o'zim bosib tekshiraman.\n\nHozirgi tartibni o'zgartirma (STT log → ovoz→xodim + 🎤 → SINOV tozalash → restart). Ikkita qo'shimcha:\n\n1. HOZIRDAN: token sarfini kamaytir — uzoq Playwright tsikllari va takroriy to'liq-fayl o'qishlardan qoch, sinovni minimal qil.\n\n2",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-09-28 14:55:53",
+      "holat": "tugadi"
+    },
+    {
+      "id": "f5a5cd90659a",
+      "agent": "telegram",
+      "vazifa": "Zo'r ish. Restartdan oldin 3 ta narsa:\n\n1. IMTIHON JADVALI: 48 ta holatni qisqa jadval qilib yubor: № | kirish | kutilgan | natija. Men kutilgan qiymatlar kelishilgan qoidalarga mosligini tekshiraman. Rejadagi 58 tadan qaysi 10 tasi avtomatik emas va nega — ro'yxat qil.\n\n2. RESTART SKRIPTI: sog'loml",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-09-28 21:23:06",
+      "holat": "tugadi"
+    },
+    {
+      "id": "05cd858ec19d",
+      "agent": "telegram",
+      "vazifa": "ha bajar",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-09-28 21:49:55",
+      "holat": "tugadi"
+    },
+    {
+      "id": "ad0d823abc6b811de",
+      "agent": "subagent:general-purpose",
+      "vazifa": "'general-purpose' turidagi fon-agent ishga tushdi",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-09-29 10:04:29",
+      "holat": "tugadi"
+    },
+    {
+      "id": "f91fea68d14f",
+      "agent": "telegram",
+      "vazifa": "[KOD ESLATMASI — avtomatik qo'shildi: sening oldingi javobing ochiq savol bilan tugagan edi: \"Eslatib qo'yay: Orzu Akademy mock-test auditi tugagan, hisobotni yubordim — faqat production DB ulanish ma'lumotlarini kutyapman davom etish uchun. Boshqa biror narsa kerakmi?\". Quyidagi Azizbekning YANGI x",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-10-09 19:53:44",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "ea1dc2c14e5f",
+      "agent": "telegram",
+      "vazifa": "Ha",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-10-11 15:21:35",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "abba5252a805f1e8c",
+      "agent": "subagent:general-purpose",
+      "vazifa": "'general-purpose' turidagi fon-agent ishga tushdi",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-10-13 10:18:33",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "abba5252a805f1e8c",
+      "agent": "subagent:general-purpose",
+      "vazifa": "'general-purpose' turidagi fon-agent ishga tushdi",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-10-13 13:57:14",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "8b10045c1de1",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis. Quyida ULARNING HAQIQIY bajargan ishi haqida FAKTLAR berilgan -- shu faktlar ",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-10-28 16:55:53",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "abdb87e6c2cba14d6",
+      "agent": "subagent:general-purpose",
+      "vazifa": "'general-purpose' turidagi fon-agent ishga tushdi",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-01 02:39:02",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "fb89db02bc3b",
+      "agent": "subagent:general-purpose",
+      "vazifa": "azizedu 3-band: jadvallar mobil karta + tap-target 44px",
+      "papka": "C:\\Users\\Dell\\jarvis\\dev_oquv-markaz",
+      "boshlangan_vaqt": "2026-11-01 15:22:51",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "98ea8fbadc2d",
+      "agent": "telegram",
+      "vazifa": "PR #3 va #4 — yaxshi ish. Merge'dan oldin:\n\n1) Tartib: avval #3 merge qilinadi. Keyin #4 ni yangi main ustiga rebase qil,\n   konfliktlarni hal qil, CI yashil bo'lsin — shundan keyin #4.\n\n2) \"Shu oy to'lamaganlar\" kartasi to'lov eslatmasi (6-bosqich) bilan AYNAN bir xil\n   ta'rifda hisoblanishini tas",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-01 16:34:57",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "a4e06b98e81046bd6",
+      "agent": "subagent:claude",
+      "vazifa": "'claude' turidagi fon-agent ishga tushdi",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-02 09:46:45",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "c399a2a93b0c",
+      "agent": "telegram",
+      "vazifa": "Quyida 18 ta yangilik sarlavhasi berilgan -- manbalar ikki turdan iborat: AI (sun'iy intellekt) sohasi VA buxgalteriya/moliya sohasi (manba nomiga qarab bilib olasan). Sen \"Azizbek AI Agent\" Telegram kanali uchun kontent strategisan. Kanal egasi Azizbek -- AI agent/biznes avtomatlashtirish quruvchi ",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 09:53:13",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "deb6f9cec1b5",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis. Quyida ULARNING HAQIQIY bajargan ishi haqida FAKTLAR berilgan -- shu faktlar ",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 14:25:40",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "903514baf929",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 14:32:10",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "07baf43d443a",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 14:38:09",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "f890540ac9cc",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 15:08:10",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "4b7122cebefa",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 15:44:15",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "9aa89e7d2142",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 16:05:11",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "849a04faaef3",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 17:11:11",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "8e5da777323b",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 17:17:09",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "e51856f8494d",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 17:38:09",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "217e2e4ea5e2",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 18:02:10",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "1c72edbaa68a",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 19:05:11",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "017122033a50",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 19:11:08",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "6eaee22edd22",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 19:20:09",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "6992968ad84b",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 19:26:09",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "3d1ee849c23d",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 19:35:09",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "23f442749717",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 19:44:15",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "9ec4b6c3758e",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 20:03:15",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "256bcff625e3",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 20:18:18",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "3a30a8c5607c",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 20:25:01",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "a2608300e0da",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 21:17:10",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "49b83b0998b9",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-05 22:05:53",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "b2c03e5e5fa7",
+      "agent": "telegram",
+      "vazifa": "P1.3 — qarzdorlar ma’nosini tuzatish (yangi branch qarzdor-muddat-2026-11):\nqarzdorlar.jsga holat qo’sh: bugun ≤ tolov_eslatma_tugash_kun va to’lanmagan bo’lsa “to’lov kutilmoqda”, muddat o’tgan va to’lanmagan/qisman bo’lsa “qarzdor”. Superadmin kartasi va markaz-admin dashboard’ida ikkalasi alohida",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-06 07:53:22",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "a3f3f996bc784f556",
+      "agent": "subagent:general-purpose",
+      "vazifa": "'general-purpose' turidagi fon-agent ishga tushdi",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-06 14:20:56",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "a9ce06014cddf7940",
+      "agent": "subagent:general-purpose",
+      "vazifa": "'general-purpose' turidagi fon-agent ishga tushdi",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-06 22:08:40",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "a0e12e20ace2",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis. Quyida ULARNING HAQIQIY bajargan ishi haqida FAKTLAR berilgan -- shu faktlar ",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-08 20:35:49",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "9ee912c706e4",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-12 09:05:10",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "77dc8a33ddee",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-14 09:44:30",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "bacd8c3ef26a",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-14 09:53:08",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "3aadac737ff9",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis (bir yo'nalishi -- buxgalteriya hisobi va audit jarayonlarini AI bilan avtomat",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-14 11:11:11",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "58d4a4adbe46",
+      "agent": "telegram",
+      "vazifa": "Sen \"Azizbek AI Agent\" nomli Telegram kanali (t.me/azizbek_ai_agent) uchun kontent yozuvchisan. Kanal egasi Azizbek -- O'zbekistondagi kichik-o'rta bizneslar uchun AI agent/avtomatlashtirish yechimlari quruvchi mutaxassis. Quyida ULARNING HAQIQIY bajargan ishi haqida FAKTLAR berilgan -- shu faktlar ",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-14 12:00:04",
+      "holat": "ishlayapti"
+    },
+    {
+      "id": "23778051e7b6",
+      "agent": "telegram",
+      "vazifa": "Quyida 9 ta yangilik sarlavhasi berilgan -- manbalar ikki turdan iborat: AI (sun'iy intellekt) sohasi VA buxgalteriya/moliya sohasi (manba nomiga qarab bilib olasan). Sen \"Azizbek AI Agent\" Telegram kanali uchun kontent strategisan. Kanal egasi Azizbek -- AI agent/biznes avtomatlashtirish quruvchi m",
+      "papka": "C:\\Users\\Dell\\jarvis",
+      "boshlangan_vaqt": "2026-11-15 12:05:14",
+      "holat": "ishlayapti"
+    }
+  ]
+}

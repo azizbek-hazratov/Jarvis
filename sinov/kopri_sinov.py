@@ -23,7 +23,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from jarvis_core import Jarvis, HEARTBEAT_INTERVAL_S  # noqa: E402
+from jarvis_core import Jarvis, HEARTBEAT_INTERVAL_S, auto_approve  # noqa: E402
 import jarvis_fon_ishlar as fon_ishlar  # noqa: E402
 
 NATIJA_FAYL = Path(__file__).resolve().parent / "kopri_sinov_natija.json"
@@ -38,18 +38,21 @@ def log(msg):
 
 
 def process_bormi(marker: str) -> bool:
-    """WMIC orqali command-line'ida `marker` bo'lgan jarayon bormi tekshiradi
-    (tasklist standart holda to'liq buyruq qatorini ko'rsatmaydi)."""
+    """PowerShell/CIM orqali command-line'ida `marker` bo'lgan jarayon bormi
+    tekshiradi (wmic bu Windows versiyasida yo'q, tasklist esa standart
+    holda to'liq buyruq qatorini ko'rsatmaydi)."""
     try:
-        r = subprocess.run(
-            ["wmic", "process", "where", f"CommandLine like '%{marker}%'", "get", "ProcessId"],
-            capture_output=True, text=True, timeout=15,
+        ps_cmd = (
+            "(Get-CimInstance Win32_Process | "
+            f"Where-Object {{ $_.CommandLine -like '*{marker}*' }} | "
+            "Measure-Object).Count"
         )
-        satrlar = [
-            s.strip() for s in r.stdout.splitlines()
-            if s.strip() and s.strip() != "ProcessId"
-        ]
-        return len(satrlar) > 0
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=20,
+        )
+        soni = int((r.stdout or "0").strip() or "0")
+        return soni > 0
     except Exception as e:
         log(f"process_bormi xato: {e}")
         return False
@@ -144,7 +147,7 @@ async def test_heartbeat(jarvis: Jarvis):
 
 
 async def main():
-    async with Jarvis(log=False) as jarvis:
+    async with Jarvis(log=False, confirm_fn=auto_approve) as jarvis:
         await test_fon_ishlar(jarvis)
         await test_stop(jarvis)
         await test_heartbeat(jarvis)

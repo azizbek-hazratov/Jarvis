@@ -1,0 +1,37 @@
+Bu papkadagi fayllar 2026-09-13 kuni quyidagi CDN manzillaridan bir martalik
+yuklab olingan (E7-bosqich — internetga bog'liqlikni kamaytirish, TOPSHIRIQ 4).
+Maqsad: mijoz oldida WiFi sekin/yo'q bo'lsa ham kamera+qo'l-aniqlash (MediaPipe
+Hands) va 3D wireframe (Three.js) to'liq ishlashi.
+
+- vendor/mediapipe/camera_utils.js
+  https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js
+
+- vendor/mediapipe/drawing_utils.js
+  https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js
+
+- vendor/mediapipe/hands/  (barcha fayllar, @mediapipe/hands@0.4.1675469240 -- 2026-09-13
+  kunidagi "latest")
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.binarypb
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hand_landmark_full.tflite
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands_solution_packed_assets.data
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands_solution_packed_assets_loader.js
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands_solution_simd_wasm_bin.js
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands_solution_simd_wasm_bin.wasm
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands_solution_wasm_bin.js
+  https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands_solution_wasm_bin.wasm
+  (oxirgi ikkitasi -- wasm_bin, SIMD'siz zaxira -- eski/g'ayrioddiy brauzerlar uchun,
+  odatiy holatda simd_wasm_bin ishlatiladi)
+
+- vendor/three/three.min.js
+  https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js
+
+Ro'yxat qanday aniqlangani: Playwright orqali soxta kamera bilan HUD sahifasi
+to'liq ishga tushirilib, MediaPipe Hands haqiqatan HAM chaqiradigan (initialize()
+paytida) barcha tarmoq so'rovlari yozib olindi -- shu ro'yxat asosida aynan shu
+fayllar yuklab olindi (ortiqcha/kam emas).
+
+Yangilash kerak bo'lsa (masalan MediaPipe/Three.js yangi versiyasiga o'tish):
+1. index.html'dagi <script src> manzillarini vaqtincha CDN'ga qaytaring,
+2. o'zgarishni Playwright bilan sinab, tarmoq so'rovlari ro'yxatini qayta chiqaring,
+3. yangi fayllarni shu papkaga yuklab, index.html'ni yana lokal yo'lga qaytaring.

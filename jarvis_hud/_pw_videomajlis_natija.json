@@ -1,0 +1,19 @@
+{
+  "grid_count": 6,
+  "grid_ids": [
+    "samandar",
+    "malika",
+    "sardor",
+    "bekzod",
+    "nozima",
+    "kamola"
+  ],
+  "speaking_class_during_playback": true,
+  "speaking_class_after_playback": false,
+  "latency_text": "Javob kechikishi: 16.35s (STT+javob+ovoz)",
+  "active_during_majlis": "nozima",
+  "natija_html_len": 1643,
+  "natija_tab_visible": true,
+  "console_errors": [],
+  "page_errors": []
+}

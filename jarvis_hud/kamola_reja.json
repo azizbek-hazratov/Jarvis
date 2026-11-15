@@ -1,0 +1,30 @@
+{
+  "sana": "2026-09-28",
+  "izoh": "Qoralama -- Kamola hech narsani o'zi joylamaydi, Azizbek tasdiqlashi kerak.",
+  "kanallar": [
+    {
+      "nomi": "@azizbekhazratov.ai (shaxsiy brend)",
+      "postlar": [
+        "\"AI Xodimlar\" case-study: Jarvis OS'da 6 ta AI-xodim (Samandar, Nozima, Sardor...) qanday ishlashi -- 60 soniyalik demo video bilan, natijada nechta soat vaqt tejalgani ko'rsatilsin.",
+        "\"Biznesingizga qancha AI-xodim kerak?\" -- qisqa test/karusel post: sotuv, buxgalteriya, nazorat, texnik yordam bo'limlarining har biri uchun AI qanday yordam berishi mumkinligi haqida.",
+        "Orzu Akademy va Grampus Junior FC real natijalari bilan qisqa hikoya (raqamlar bilan): necha o'quvchi/sportchi, avtomatlashtirilgan hisobot qancha vaqt tejagani."
+      ]
+    },
+    {
+      "nomi": "AzizEdu (Orzu Akademy)",
+      "postlar": [
+        "Yangi o'quv yili davomida ro'yxatga olingan yangi guruhlar/fanlar haqida qisqa e'lon posti.",
+        "\"To'lovni o'z vaqtida amalga oshiring\" -- ota-onalarga yumshoq, do'stona eslatma posti (aniq qarzdor ismi ko'rsatilmaydi, umumiy chaqiriq).",
+        "O'qituvchi/o'quvchi yutuqlari haqida qisqa maqtov posti (test natijalari, faol ishtirok)."
+      ]
+    },
+    {
+      "nomi": "Nishon (Grampus Junior FC / sport maktablari)",
+      "postlar": [
+        "Grampus Junior FC'ning yangi filiali yoki mashg'ulot jadvali haqida e'lon.",
+        "Yosh sportchilar uchun \"haftaning yutuqlari\" qisqa post (murabbiy tomonidan belgilangan eng faol sportchilar).",
+        "Ota-onalarga: \"Nishon platformasi orqali farzandingiz rivojlanishini kuzating\" -- platformaning ota-ona uchun foydali tomonlari haqida."
+      ]
+    }
+  ]
+}

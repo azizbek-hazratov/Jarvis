@@ -1,45 +1,89 @@
-# Xavfsizlik uchun: bu papka juda ko'p shaxsiy/sirli fayl saqlaydi.
-# Ataylab QATTIQ yondashuv: standart holatda HECH NARSA kuzatilmaydi,
-# faqat aniq `git add <fayl>` bilan qo'shilgan fayllar commit qilinadi.
-# Bu fayl asosan HUJJAT sifatida xizmat qiladi (nima sir ekanini eslatib
-# turadi) — asosiy himoya `git add -A`/`git add .` ISHLATMASLIK qoidasi.
-
-# Muhitlar/sozlamalar
-.env
-.env.*
-config.py
-
-# Telegram/Telethon sessiyalari (= akkountga kirish huquqi bilan barobar)
+﻿.env
+*.env
 *.session
 *.session-journal
-
-# Token/kalit/cookie fayllari
-*token*
-*kalit*
-*.pem
-*.key
-*secret*
-vps_kalitlar/
-
-# Loglar va vaqtinchalik audit fayllari
-*.log
-_diag_bash.log
-_audit_*.txt
-_audit_*.csv
-
-# Ma'lumotlar bazasi zaxiralari
-*.dump
-
-# Python kesh
-__pycache__/
-*.pyc
-
-# Shaxsiy suhbat/xotira arxivi (real mijoz/shaxsiy ma'lumot ko'p)
-suhbatlar/
+userbot/
 xotira/
+zaxira/
+*.log
+*.jsonl
+*.bak*
+__pycache__/
+.venv/
+venv/
+node_modules/
+*.key
+*.pem
+vps_kalitlar/
+transkripsiya/
+zaxira_*/
+vizual-server/
+xodim-baholash/
+tmp_*
+*.lock
+*_holat.json
+*_natija.txt
+token_yangilash.py
+vps_kalitlar/
+transkripsiya/
+zaxira_*/
+vizual-server/
+xodim-baholash/
+suhbatlar/
+telefon-dokoni/
+taklif/
+taqdimot/
+tmp_*
+*.lock
+*_holat.json
+*_natija.txt
+token_yangilash.py
 
-# Skrinshot/media chiqindilar
+*_log.txt
+*_out.txt
+sinov/*.json
+sinov/*.xlsx
 *.png
-*.jpg
-*.jpeg
+*.xlsx
+Claude outputs/
+restoran-server/
+shablonlar/
+portfolio_postlar*
+page1c.html
+brauzer_profil/
+dasturxon-app/
+dasturxon-delivery/
+add_log.txt
+mijoz_*/
+eskirgan/
+jarvis_hud/yigilishlar/
+jarvis_hud_demo_zaxira_*/
+*.mp3
+*.ogg
+*.wav
+hud_token.py
+mijozlar/
+jarvis_hud_demo_*/
+jarvis_hud/majlislar/
+*.mp3
+*.ogg
+*.wav
+*hud_token*
 kiruvchi/
+kontent/
+loyihalar/
+futbol-server/
+brauzer/
+instagram-server/
+_paket_tmp_*/
+config.py
+config.py
+mijozlar/
+futbol-server/
+brauzer/
+instagram-server/
+kiruvchi/
+kontent/
+loyihalar/
+_paket_tmp_*/
+*.mp3

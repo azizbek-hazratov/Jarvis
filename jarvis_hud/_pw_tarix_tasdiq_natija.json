@@ -1,0 +1,21 @@
+{
+  "kamola_javob": {
+    "turi": "oqish",
+    "javob": "Azizbek aka, yo'q, bunday narsani eslab qololmayman — men mevalarga oid shaxsiy afzallikni saqlamayman va bunda ham menda shu haqda hech qanday real ma'lumot yo'q, shuning uchun to'qib aytmayman. Xohlasangiz, aynan shu haqda alohida eslatma sifatida yozib qo'yishim mumkin."
+  },
+  "kamola_kechikish_s": 11.0,
+  "nozima_javob": {
+    "turi": "oqish",
+    "javob": "Bu ma'lumot menda yo'q — jamoa ruhi haqida so'rov yoki statistika ko'rmaganman, shu savol bo'yicha aniq narsa aytolmayman."
+  },
+  "nozima_kechikish_s": 8.9,
+  "xotira_aralashdimi": false,
+  "yozish_javob_bekor": {
+    "turi": "yozish",
+    "javob": "Men Nozima, bu so'rov yozuvchi amal talab qiladi — kartochkamda \"Tasdiqlash\" tugmasini bosing.",
+    "id": "11db6c5ef8"
+  },
+  "bekor_transkript_oxiri": "Nozima: (qo'ng'iroq boshlandi — mikrofon tugmasini bosib gapiring)\nNozima: Men Nozima, bu so'rov yozuvchi amal talab qiladi — kartochkamda \"Tasdiqlash\" tugmasini bosing.\nNozima: Xo'p, bekor qildim.",
+  "tasdiqlash_ijro_sinovi": "SINALMADI (Azizbek so'roviga ko'ra to'xtatilgan, SINOV_REJIM=1 qayta ishga tushirilguncha)",
+  "console_errors": []
+}

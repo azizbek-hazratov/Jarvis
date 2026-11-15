@@ -1,0 +1,1921 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<title>JARVIS — HUD (C2-bosqich: qo'l bilan 3D obyektni boshqarish)</title>
+<!-- E7-bosqich (2026-09-13): MediaPipe/Three.js endi CDN'dan EMAS, lokal vendor/ papkasidan yuklanadi —
+     internet yo'q/sekin bo'lsa ham kamera+qo'l-aniqlash va 3D vizual qism to'liq ishlashi uchun.
+     Fayllar aynan CDN'dagi bilan bir xil (vendor/VERSIYALAR.txt'da qayerdan/qachon olingani yozilgan). -->
+<script src="vendor/mediapipe/camera_utils.js"></script>
+<script src="vendor/mediapipe/drawing_utils.js"></script>
+<script src="vendor/mediapipe/hands/hands.js"></script>
+<script src="vendor/three/three.min.js"></script>
+<style>
+  :root{
+    --navy-deep:#040914;
+    --navy:#081226;
+    --panel:#0b1a34;
+    --neon:#00d4ff;
+    --neon-soft:rgba(0,212,255,.35);
+    --neon-dim:rgba(0,212,255,.14);
+    --green:#39ff8a;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:
+      radial-gradient(ellipse at 50% 45%, #0d2140 0%, var(--navy) 45%, var(--navy-deep) 100%);
+    font-family:"Consolas","Segoe UI",monospace;
+    color:var(--neon);
+  }
+
+  /* Nozik HUD-panjara foni */
+  .grid-overlay{
+    position:fixed; inset:0; pointer-events:none; z-index:1;
+    background-image:
+      linear-gradient(rgba(0,212,255,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,.05) 1px, transparent 1px);
+    background-size:42px 42px;
+    mask-image:radial-gradient(ellipse at center, rgba(0,0,0,.9) 0%, transparent 72%);
+    -webkit-mask-image:radial-gradient(ellipse at center, rgba(0,0,0,.9) 0%, transparent 72%);
+  }
+  .vignette{
+    position:fixed; inset:0; pointer-events:none; z-index:2;
+    box-shadow:inset 0 0 180px 40px rgba(0,0,0,.75);
+  }
+
+  .brand{
+    position:fixed; top:28px; left:50%; transform:translateX(-50%); z-index:5;
+    font-size:13px; letter-spacing:.5em; color:var(--neon); opacity:.75;
+    text-shadow:0 0 12px var(--neon-soft);
+  }
+
+  /* ---- Markaziy nafas oluvchi shar ---- */
+  .orb-stage{
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:3;
+    width:420px; height:420px;
+  }
+  .ring{
+    position:absolute; top:50%; left:50%; border-radius:50%;
+    border:1px solid rgba(0,212,255,.22);
+    transform:translate(-50%,-50%);
+  }
+  .ring1{ width:260px; height:260px; animation:spin 14s linear infinite; }
+  .ring2{ width:340px; height:340px; border-style:dashed; border-color:rgba(0,212,255,.14); animation:spin 26s linear infinite reverse; }
+  .ring3{ width:410px; height:410px; border-color:rgba(0,212,255,.08); animation:spin 40s linear infinite; }
+  @keyframes spin{ from{transform:translate(-50%,-50%) rotate(0deg);} to{transform:translate(-50%,-50%) rotate(360deg);} }
+
+  .orb{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:190px; height:190px; border-radius:50%;
+    background:radial-gradient(circle at 34% 32%, #bdf6ff 0%, #4fe0ff 22%, #00d4ff 48%, #0072a3 78%, #012a3d 100%);
+    animation:breathe 4.2s ease-in-out infinite;
+  }
+  .orb::after{
+    content:""; position:absolute; inset:-14px; border-radius:50%;
+    background:radial-gradient(circle, rgba(0,212,255,.35), transparent 70%);
+    z-index:-1; filter:blur(6px);
+  }
+  @keyframes breathe{
+    0%,100%{ transform:translate(-50%,-50%) scale(1);
+      box-shadow:0 0 50px 6px rgba(0,212,255,.35), 0 0 110px 30px rgba(0,212,255,.12); }
+    50%{ transform:translate(-50%,-50%) scale(1.09);
+      box-shadow:0 0 80px 16px rgba(0,212,255,.55), 0 0 160px 50px rgba(0,212,255,.2); }
+  }
+
+  /* ---- Chap panel: matn ----
+     ESKI: top:50%+translateY(-50%) (vertikal markazlangan). Bo'limlar soni
+     bugun ko'paygani sari (XAVFSIZLIK JURNALI, keyin bu #9-demo yaxshilash)
+     `.panel-left` balandligi o'sib, markazlash uni TASODIFIY tepaga/pastga
+     surib, mustaqil `.panel-jarayonlar` (top:245, FIKS piksel) bilan
+     TURLI ekran balandliklarida (720p HAM, 1080p HAM sinaldi) ustma-ust
+     tushirib qo'yayotgani skrinshot orqali aniqlandi — ekran balandligidan
+     qat'i nazar, markazlash strategiyasi "JARAYONLAR HOLATI" bilan
+     doim manzil to'qnashuviga olib keladi. TUZATISH: markazlash o'rniga
+     FIKS tepadan boshlanadi (endi bo'lim qo'shilsa faqat pastga cho'ziladi,
+     "JARAYONLAR HOLATI"ning tepasi bilan hech qachon to'qnashmaydi). */
+  .panel-left{
+    position:fixed; left:34px; top:56px; z-index:5;
+    width:250px; padding:20px 22px; border-left:2px solid var(--neon);
+    background:linear-gradient(90deg, var(--neon-dim), transparent 85%);
+    backdrop-filter:blur(2px);
+  }
+  .panel-left h3{
+    margin:0 0 12px; font-size:11px; letter-spacing:.25em; color:var(--neon);
+    text-shadow:0 0 8px var(--neon-soft);
+  }
+  .kv{ display:flex; justify-content:space-between; font-size:12px; margin:6px 0; color:#bfe9f5; }
+  .kv b{ color:var(--neon); font-weight:600; }
+  .divider{ height:1px; background:linear-gradient(90deg, var(--neon-soft), transparent); margin:16px 0 10px; }
+  /* "OXIRGI AMALLAR" (#1) va "XAVFSIZLIK JURNALI" (#7) ro'yxatlari cheksiz
+     o'sishi mumkin (15/30 tagacha yozuv) — max-height+scroll BO'LMASA,
+     `.panel-left` (vertikal markazlangan, `top:50%`) shu qadar cho'zilib
+     ketadiki, pastdagi mustaqil `position:fixed` panellar (JARAYONLAR
+     HOLATI, top:245px) bilan ustma-ust tushib qoladi (2026-09-21, #9 MVP
+     sinovida skrinshot orqali real aniqlandi). */
+  #oxirgiAmallar, #xavfsizlikJurnali{ max-height:96px; overflow-y:auto; overflow-x:hidden; }
+  .log-line{ font-size:11px; color:#7fb9cc; margin:7px 0; line-height:1.4; opacity:.9; }
+  .log-line span{ color:var(--neon); margin-right:6px; }
+  .log-line-bosh{ opacity:.55; font-style:italic; }
+  .log-line.xato span, .log-line.timeout span{ color:#ff6b6b; }
+
+  /* Video/demo uchun ko'rgazmali qilish (2026-09-21): "OXIRGI AMALLAR" paneli —
+     MA'LUMOTNING O'ZI O'ZGARMAYDI (haqiqiy /amallar ro'yxati), faqat ko'rinish:
+     shrift birroz kattaroq (uzoqdan/videoda o'qilsin), amal matnidan (haqiqiy
+     so'rov matni) kalit so'z bo'yicha turi aniqlanib chap-chiziq rangi+ikon
+     qo'yiladi, va HAR YANGI qator (avvalgi so'rovda yo'q bo'lgan) chapdan
+     sirg'alib+xiralashib kiradi — sahifa birinchi yuklanganda hech narsa
+     animatsiya bo'lmaydi (faqat keyingi haqiqiy YANGI amallar uchun). */
+  #oxirgiAmallar .log-line{
+    font-size:12.5px; line-height:1.45; margin:5px 0; padding-left:9px;
+    border-left:3px solid rgba(191,233,245,.3);
+  }
+  #oxirgiAmallar .log-ikon{ margin-right:5px; }
+  #oxirgiAmallar .log-vaqt{ color:var(--neon); margin-right:6px; font-weight:600; }
+  #oxirgiAmallar .turi-gmail{ border-left-color:#ea4335; }
+  #oxirgiAmallar .turi-drive{ border-left-color:#4285f4; }
+  #oxirgiAmallar .turi-calendar{ border-left-color:#34a853; }
+  #oxirgiAmallar .turi-excel{ border-left-color:#1d6f42; }
+  #oxirgiAmallar .turi-canva{ border-left-color:#8b5cf6; }
+  #oxirgiAmallar .turi-brauzer{ border-left-color:#00d4ff; }
+  #oxirgiAmallar .turi-desktop{ border-left-color:#f2a900; }
+  @keyframes amalKirish{
+    from{ opacity:0; transform:translateX(-16px); }
+    to{ opacity:.9; transform:translateX(0); }
+  }
+  #oxirgiAmallar .amal-yangi{ animation:amalKirish .55s ease; }
+  .transcript-text{
+    font-size:12px; color:#bfe9f5; line-height:1.5; min-height:38px; opacity:.9;
+    max-height:160px; overflow-y:auto; padding-right:4px;
+  }
+  /* E5-bosqich: mikrofon yoqilgan/tahlil qilinayotgan paytda xom matn o'rniga shu indikator ko'rsatiladi */
+  .listening-dots{ display:inline-flex; gap:3px; margin-left:6px; vertical-align:middle; }
+  .listening-dots span{
+    display:inline-block; width:4px; height:4px; border-radius:50%;
+    background:var(--neon); opacity:.25; animation:dotBounce 1.2s infinite ease-in-out;
+  }
+  .listening-dots span:nth-child(2){ animation-delay:.2s; }
+  .listening-dots span:nth-child(3){ animation-delay:.4s; }
+  @keyframes dotBounce{ 0%,80%,100%{ opacity:.25; transform:translateY(0); } 40%{ opacity:1; transform:translateY(-3px); } }
+
+  /* E5-bosqich: "SIZ" subtitr-kartasi — mikrofon o'chib, aniq matn tayyor bo'lgach BIR MARTA, pastdan
+     tepaga suzib chiqadi (fade-in + slide-up), keyin bir necha soniyadan so'ng avtomatik so'nadi. */
+  .user-caption{
+    position:fixed; bottom:118px; left:50%; z-index:6;
+    max-width:640px; padding:14px 26px; border-radius:16px;
+    background:rgba(4,9,20,.74); border:1px solid rgba(0,212,255,.4);
+    box-shadow:0 10px 34px rgba(0,0,0,.5), 0 0 26px rgba(0,212,255,.14);
+    backdrop-filter:blur(6px);
+    opacity:0; pointer-events:none;
+    transform:translate(-50%, 18px);
+    transition:opacity .45s ease, transform .45s ease;
+  }
+  .user-caption.show{ opacity:1; transform:translate(-50%, 0); }
+  .user-caption-label{
+    display:block; font-size:10px; letter-spacing:.32em; color:var(--neon); opacity:.8; margin-bottom:6px;
+  }
+  .user-caption-text{ font-size:16px; line-height:1.55; color:#eaf9ff; }
+
+  /* E6-bosqich: "JARVIS" javob-subtitri — xuddi shu joyda (SIZ-karta bilan bir vaqtda ko'rinmaydi,
+     javob kelganda SIZ-karta darhol yashiriladi), faqat aksent rangi yashil (--green) — brendni
+     foydalanuvchi matnidan vizual ajratish uchun. Ovoz bilan BIR VAQTDA chiqadi (playback boshlanganda). */
+  .jarvis-caption{
+    position:fixed; bottom:118px; left:50%; z-index:6;
+    max-width:640px; padding:14px 26px; border-radius:16px;
+    background:rgba(4,9,20,.74); border:1px solid rgba(57,255,138,.45);
+    box-shadow:0 10px 34px rgba(0,0,0,.5), 0 0 26px rgba(57,255,138,.16);
+    backdrop-filter:blur(6px);
+    opacity:0; pointer-events:none;
+    transform:translate(-50%, 18px);
+    transition:opacity .4s ease, transform .4s ease;
+  }
+  .jarvis-caption.show{ opacity:1; transform:translate(-50%, 0); }
+  .jarvis-caption-label{
+    display:block; font-size:10px; letter-spacing:.32em; color:var(--green); opacity:.85; margin-bottom:6px;
+  }
+  .jarvis-caption-text{ font-size:16px; line-height:1.55; color:#eaf9ff; }
+
+  /* E5-bosqich: buyruq bajarilgach chiqadigan qisqa tasdiq-caption */
+  .confirm-caption{
+    position:fixed; top:150px; left:50%; z-index:6;
+    padding:8px 24px; border-radius:999px;
+    background:rgba(57,255,138,.12); border:1px solid rgba(57,255,138,.6);
+    color:var(--green); font-size:12px; letter-spacing:.2em; font-weight:700;
+    box-shadow:0 0 22px rgba(57,255,138,.25);
+    opacity:0; pointer-events:none;
+    transform:translate(-50%, -10px);
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  .confirm-caption.show{ opacity:1; transform:translate(-50%, 0); }
+
+  /* roadmap #9 MVP (2026-09-21): bildirishnoma markazi — fon skriptlardan
+     (hozircha jarvis_proaktiv.py) kelgan push-style toast'lar, pastdan
+     yuqoriga to'planadi (yangisi eng pastda paydo bo'ladi). */
+  .bildirishnoma-stack{
+    position:fixed; bottom:24px; right:34px; z-index:7;
+    display:flex; flex-direction:column-reverse; gap:10px;
+    width:300px; pointer-events:none;
+  }
+  .bildirishnoma-toast{
+    padding:12px 16px; border-radius:10px;
+    background:rgba(11,26,52,.92); border:1px solid rgba(0,212,255,.4);
+    border-left:3px solid var(--neon);
+    box-shadow:0 10px 30px rgba(0,0,0,.5), 0 0 20px rgba(0,212,255,.15);
+    backdrop-filter:blur(6px);
+    opacity:0; transform:translateX(30px);
+    transition:opacity .4s ease, transform .4s ease;
+  }
+  .bildirishnoma-toast.show{ opacity:1; transform:translateX(0); }
+  .bildirishnoma-toast .bt-label{
+    display:block; font-size:9px; letter-spacing:.28em; color:var(--neon);
+    opacity:.85; margin-bottom:5px;
+  }
+  .bildirishnoma-toast .bt-text{ font-size:12px; line-height:1.5; color:#eaf9ff; }
+
+  .transcript-actions{ display:flex; gap:8px; margin-top:12px; }
+
+  .clear-btn{
+    padding:7px 14px; border-radius:999px;
+    border:1px solid rgba(191,233,245,.3); background:transparent;
+    color:#7fb9cc; font-family:inherit; font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; cursor:pointer; transition:background .2s, color .2s, opacity .2s;
+  }
+  .clear-btn:hover{ background:rgba(191,233,245,.1); color:#bfe9f5; }
+  .clear-btn:disabled{ opacity:.4; cursor:not-allowed; }
+
+  /* ---- E2-bosqich: Jarvisdan kelgan javob paneli (o'ng yuqori, stage-note ostida, bo'sh joyda) ---- */
+  .panel-answer{
+    position:fixed; top:190px; right:34px; z-index:5;
+    width:280px; max-height:260px; overflow-y:auto;
+    padding:16px 22px; border-left:2px solid var(--neon);
+    background:linear-gradient(90deg, var(--neon-dim), transparent 85%);
+    backdrop-filter:blur(2px); display:none;
+  }
+  .panel-answer h3{
+    margin:0 0 12px; font-size:11px; letter-spacing:.25em; color:var(--neon);
+    text-shadow:0 0 8px var(--neon-soft);
+  }
+  .answer-text{ font-size:12px; color:#bfe9f5; line-height:1.6; white-space:pre-wrap; }
+
+  /* ---- O'ng panel: ovoz-spektri ---- */
+  .panel-right{
+    position:fixed; right:44px; top:50%; transform:translateY(-50%); z-index:5;
+    display:flex; align-items:center; gap:5px; height:210px;
+  }
+  .bar{
+    width:5px; border-radius:3px 3px 0 0;
+    background:linear-gradient(to top, #0090b8, var(--neon) 60%, #d8fbff);
+    box-shadow:0 0 8px rgba(0,212,255,.55);
+    transition:height .16s ease;
+  }
+
+  /* ---- Pastki status-tugmalar ---- */
+  .statusbar{
+    position:fixed; bottom:36px; left:50%; transform:translateX(-50%); z-index:5;
+    display:flex; gap:14px;
+  }
+  .pill{
+    display:flex; align-items:center; gap:8px;
+    padding:9px 20px; border-radius:999px; border:1px solid rgba(0,212,255,.55);
+    background:rgba(0,212,255,.07); color:var(--neon);
+    font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    box-shadow:0 0 16px rgba(0,212,255,.18);
+  }
+  .pill .dot{ width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+  .pill .dot.cyan{ background:var(--neon); box-shadow:0 0 8px var(--neon); }
+  .pill.clickable{ cursor:pointer; user-select:none; transition:background .2s, border-color .2s; }
+  .pill.clickable:hover{ background:rgba(0,212,255,.15); }
+  .pill .dot.red{ background:#ff4d5e; box-shadow:0 0 8px #ff4d5e; }
+  .pill .dot.pulse{ animation:dotpulse 1.1s ease-in-out infinite; }
+  @keyframes dotpulse{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
+
+  .stage-note{
+    position:fixed; top:28px; right:34px; z-index:5; font-size:10.5px; color:#5f8aa0;
+    letter-spacing:.05em; text-align:right; line-height:1.6; max-width:230px;
+  }
+  .mic-error, .camera-error, .three-error, .speech-error{
+    position:fixed; left:50%; transform:translateX(-50%); z-index:5;
+    font-size:11px; color:#ff8f9a; background:rgba(255,77,94,.1); border:1px solid rgba(255,77,94,.5);
+    padding:8px 16px; border-radius:8px; display:none; max-width:460px; text-align:center; line-height:1.5;
+  }
+  .mic-error{ bottom:152px; }
+  .camera-error{ bottom:152px; }
+  .three-error{ top:130px; bottom:auto; }
+  .speech-error{ top:170px; bottom:auto; }
+
+  /* ---- C1-bosqich: statik 3D wireframe (Three.js) — orb bilan bir markazda, ortidan ko'rinadi ---- */
+  .wire-canvas{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:300px; height:300px; pointer-events:none;
+  }
+
+  /* ---- B1-bosqich: kamera preview (faqat jonli video, tahlilsiz) ---- */
+  .cam-preview{
+    position:fixed; top:78px; left:34px; z-index:5;
+    width:200px; height:150px; border:1px solid rgba(0,212,255,.5); border-radius:10px;
+    background:#020610; box-shadow:0 0 18px rgba(0,212,255,.2); overflow:hidden; display:none;
+  }
+  /* video + skelet-canvas bitta ko'zgu-o'ralgan qatlamda birga aylantiriladi, shu bilan ular hech qachon bir-biridan siljimaydi */
+  .cam-preview .cam-stage{ position:absolute; inset:0; transform:scaleX(-1); }
+  .cam-preview video, .cam-preview canvas{
+    position:absolute; top:0; left:0; width:100%; height:100%; display:block; object-fit:cover;
+  }
+  .cam-preview canvas{ background:transparent; }
+  .cam-preview .cam-label{
+    position:absolute; top:6px; left:8px; font-size:9.5px; letter-spacing:.15em; color:var(--neon);
+    text-shadow:0 0 6px var(--neon-soft); opacity:.85; z-index:2;
+  }
+
+  .hand-status{
+    position:fixed; bottom:100px; left:50%; transform:translateX(-50%); z-index:5;
+    font-size:15px; letter-spacing:.16em; text-transform:uppercase; font-weight:700;
+    color:var(--neon); text-shadow:0 0 14px var(--neon-soft);
+    padding:8px 26px; border:1px solid rgba(0,212,255,.4); border-radius:999px;
+    background:rgba(0,212,255,.06); display:none;
+  }
+  .hand-status.idle{ color:#5f8aa0; border-color:rgba(95,138,160,.4); text-shadow:none; }
+
+  /* ---- 3-guruh: Vazifalar va jadval paneli (pastki chap) ---- */
+  .panel-tasks{
+    position:fixed; left:34px; bottom:40px; z-index:5;
+    width:250px; padding:16px 22px; border-left:2px solid var(--neon);
+    background:linear-gradient(90deg, var(--neon-dim), transparent 85%);
+    backdrop-filter:blur(2px);
+  }
+  .panel-tasks h3{
+    margin:0 0 12px; font-size:11px; letter-spacing:.25em; color:var(--neon);
+    text-shadow:0 0 8px var(--neon-soft);
+  }
+  .task-line{ font-size:11px; color:#7fb9cc; margin:7px 0; line-height:1.4; opacity:.9; }
+  .task-line span{ color:var(--neon); margin-right:6px; }
+  .task-line-bosh{ opacity:.55; font-style:italic; }
+
+  /* ---- 3-guruh: Muhit paneli (pastki o'ng burchak, kichik) ---- */
+  .panel-env{
+    position:fixed; right:44px; bottom:40px; z-index:5;
+    padding:12px 20px; border-left:2px solid var(--neon);
+    background:linear-gradient(90deg, var(--neon-dim), transparent 85%);
+    backdrop-filter:blur(2px); text-align:right;
+  }
+  .panel-env h3{
+    margin:0 0 10px; font-size:11px; letter-spacing:.25em; color:var(--neon);
+    text-shadow:0 0 8px var(--neon-soft);
+  }
+  .panel-env .kv{ justify-content:flex-end; gap:10px; }
+
+  /* ---- YANGI: "JARAYONLAR HOLATI" paneli (top-left, cam-preview'dan pastda, bo'sh joyda) ----
+     MUHIM (2026-09-21, real Playwright skrinshot orqali aniqlandi): FIKS top:245px
+     qiymati XATO edi — `.panel-left` (TIZIM HOLATI+OXIRGI AMALLAR) ning haqiqiy
+     pastki chegarasi (real o'lchamda ~586px, 1080pda) top:245'dan ANCHA pastda,
+     demak bu panel doim OXIRGI AMALLAR/XAVFSIZLIK JURNALI matni bilan ustma-ust
+     tushib kelgan (avvalgi tekshiruvda skrinshot yetarlicha zoom qilinmagani
+     uchun ko'rinmay qolgan, faqat endi aniqlandi). TUZATISH: `top` endi FIKS
+     emas, pastdagi JS (`chapPanellarniJoylashtir`) orqali `.panel-left`ning
+     HAQIQIY renderlangan pastki chegarasidan darhol keyin dinamik qo'yiladi —
+     shunda matn qancha o'ssa ham (yangi amallar, uzun transkript) ikkalasi
+     hech qachon ustma-ust tushmaydi. Quyidagi top:245 shunchaki JS ishga
+     tushmagunча ko'rinadigan boshlang'ich zaxira qiymat, xolos. */
+  .panel-jarayonlar{
+    position:fixed; left:34px; top:245px; z-index:5;
+    width:220px; padding:14px 18px; border-left:2px solid var(--neon);
+    background:linear-gradient(90deg, var(--neon-dim), transparent 85%);
+    backdrop-filter:blur(2px);
+  }
+  .panel-jarayonlar h3{
+    margin:0 0 10px; font-size:10.5px; letter-spacing:.22em; color:var(--neon);
+    text-shadow:0 0 8px var(--neon-soft);
+  }
+  /* 2026-09-27 TUZATISH (Azizbek topgan xato): avvalgi max-height:30px
+     bitta qatorning o'zi ham to'liq sig'maydigan darajada tor edi -- 7 ta
+     jarayon bo'lsa ham panelda FAQAT 1 ta qator ko'rinar edi. Har bir
+     `.jarayon-line` taxminan 26px (font-size 11px*1.3 + margin 6+6px) --
+     endi 8 tagacha qatorni SCROLLSIZ to'liq ko'rsatish uchun 220px qilindi.
+     Pastdagi `.panel-tasks` bilan to'qnashuv xavfi yo'q, chunki JS
+     (`chapPanellarniJoylashtir`) `.panel-tasks`ning joylashuvini
+     `.panel-jarayonlar`ning HAQIQIY (o'sgan) pastki chegarasidan hisoblab
+     dinamik qo'yadi (yuqoridagi 2026-09-27 izohiga qarang). Agar kelajakda
+     jarayonlar soni yana ko'paysa, shu holda ham overflow-y:auto scroll
+     bilan himoyalangan. */
+  #jarayonlarRoyxati{ max-height:220px; overflow-y:auto; overflow-x:hidden; }
+  .jarayon-line{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    font-size:11px; color:#bfe9f5; margin:6px 0; line-height:1.3;
+  }
+  .jarayon-nom{ opacity:.9; }
+  .jarayon-holat{
+    display:flex; align-items:center; gap:5px; font-size:9.5px; letter-spacing:.08em;
+    text-transform:uppercase; white-space:nowrap;
+  }
+  .jarayon-holat .dot{ width:6px; height:6px; border-radius:50%; }
+  .jarayon-holat.onlayn{ color:var(--green); }
+  .jarayon-holat.onlayn .dot{ background:var(--green); box-shadow:0 0 6px var(--green); }
+  .jarayon-holat.ochiq{ color:#ff6b6b; }
+  .jarayon-holat.ochiq .dot{ background:#ff6b6b; box-shadow:0 0 6px #ff6b6b; }
+
+  /* 2026-09-29 (Azizbek tuzatishi): SINOV REJIMI banneri -- faylga
+     asoslangan (sinov_rejim.json), restartsiz yoqiladi/o'chadi. */
+  .sinov-banner{
+    position:fixed; top:0; left:0; right:0; z-index:999;
+    background:#f5c518; color:#1a1200; font:700 12px/1.4 system-ui, sans-serif;
+    letter-spacing:.03em; text-align:center; padding:7px 12px;
+    display:flex; align-items:center; justify-content:center; gap:12px;
+    box-shadow:0 2px 10px rgba(0,0,0,.35);
+  }
+  .sinov-banner[hidden]{ display:none; }
+  .sinov-banner button{
+    background:#1a1200; color:#f5c518; border:0; border-radius:6px;
+    font:700 11px system-ui, sans-serif; padding:4px 10px; cursor:pointer;
+  }
+  .sinov-banner button:hover{ opacity:.85; }
+</style>
+</head>
+<body>
+
+  <div class="sinov-banner" id="sinovBanner" hidden>
+    ⚠️ SINOV REJIMI — xabarlar faqat Saqlangan xabarlarga ketadi
+    <button type="button" id="sinovOchirBtn">O'chirish</button>
+  </div>
+
+  <div class="grid-overlay"></div>
+  <div class="vignette"></div>
+
+  <div class="brand">J A R V I S</div>
+  <a href="jamoa.html" style="position:fixed;top:28px;left:34px;z-index:6;font-size:10px;letter-spacing:.2em;color:var(--neon);opacity:.75;text-decoration:none;border:1px solid rgba(0,212,255,.4);border-radius:999px;padding:6px 14px;">AI XODIMLAR →</a>
+  <div class="stage-note">C2-BOSQICH — qo'l bilan 3D obyektni boshqarish.<br>Ochiq kaft = tezroq aylanish, Musht = to'xtash, Pinch = kattalashtirish/kichraytirish.<br>Boshlash uchun "Kamera" tugmasini bosing.</div>
+
+  <!-- B2-bosqich: kamera preview — jonli <video> + ustida shaffof <canvas> (MediaPipe skelet chizig'i uchun) -->
+  <div class="cam-preview" id="camPreview">
+    <span class="cam-label">KAMERA</span>
+    <div class="cam-stage">
+      <video id="camVideo" playsinline autoplay muted></video>
+      <canvas id="camCanvas" width="200" height="150"></canvas>
+    </div>
+  </div>
+
+  <!-- Markaziy shar + C1-bosqich: statik 3D wireframe (Three.js, orb bilan bir markazda) -->
+  <div class="orb-stage">
+    <div class="ring ring3"></div>
+    <div class="ring ring2"></div>
+    <div class="ring ring1"></div>
+    <canvas id="wireCanvas" class="wire-canvas"></canvas>
+    <div class="orb" id="orb"></div>
+  </div>
+  <div class="three-error" id="threeError"></div>
+  <div class="confirm-caption" id="confirmCaption">✅ BAJARILDI</div>
+
+  <!-- roadmap #9 MVP: bildirishnoma markazi (toast stack) -->
+  <div class="bildirishnoma-stack" id="bildirishnomaStack"></div>
+
+  <!-- Chap: tizim holati paneli -->
+  <div class="panel-left">
+    <h3>TIZIM HOLATI</h3>
+    <div class="kv"><span>Holat</span><b>FAOL</b></div>
+    <div class="kv"><span>CPU</span><b id="cpuVal">—</b></div>
+    <div class="kv"><span>Xotira</span><b id="memVal">—</b></div>
+    <div class="kv"><span>Uptime</span><b id="uptimeVal">00:00:00</b></div>
+
+    <div class="divider"></div>
+    <h3>OXIRGI AMALLAR</h3>
+    <div id="oxirgiAmallar">
+      <div class="log-line log-line-bosh">Hali haqiqiy so'rov yuborilmagan...</div>
+    </div>
+
+    <div class="divider"></div>
+    <h3>XAVFSIZLIK JURNALI</h3>
+    <div id="xavfsizlikJurnali">
+      <div class="log-line log-line-bosh">Hali sezgir amal qayd etilmagan...</div>
+    </div>
+
+    <!-- E1/E2/E3-bosqich: ovozni matnga aylantirish — mikrofon o'chirilganda avtomatik Jarvisga yuboriladi -->
+    <div class="divider"></div>
+    <h3>ESHITILGAN MATN</h3>
+    <div class="transcript-text" id="transcriptText">...</div>
+    <div class="transcript-actions">
+      <button class="clear-btn" id="clearBtn">Tozalash</button>
+    </div>
+  </div>
+
+  <!-- E2-bosqich: Jarvisdan kelgan javob (so'ralgandagina ko'rinadi) -->
+  <div class="panel-answer" id="panelAnswer">
+    <h3>JAVOB</h3>
+    <div class="answer-text" id="answerText"></div>
+    <div id="shaxsiyYozishEl" style="display:none;"></div>
+  </div>
+
+  <!-- O'ng: ovoz-spektri (hozircha tasodifiy) -->
+  <div class="panel-right" id="spectrum"></div>
+
+  <!-- YANGI: Jarayonlar holati paneli (yuqori chap, cam-preview'dan pastda) — fon xizmatlarning REAL onlayn/o'chiq holati -->
+  <div class="panel-jarayonlar">
+    <h3>JARAYONLAR HOLATI</h3>
+    <div id="jarayonlarRoyxati">
+      <div class="jarayon-line"><span class="jarayon-nom">Yuklanmoqda...</span></div>
+    </div>
+  </div>
+
+  <!-- 3-guruh: Vazifalar va jadval paneli (pastki chap) — endi HAQIQIY xotira/vazifalar.md'dan -->
+  <div class="panel-tasks">
+    <h3>VAZIFALAR VA JADVAL</h3>
+    <div id="vazifalarRoyxati">
+      <div class="task-line task-line-bosh">Yuklanmoqda...</div>
+    </div>
+  </div>
+
+  <!-- 3-guruh: Muhit paneli (pastki o'ng burchak) — sana/vaqt haqiqiy, ob-havo statik namuna -->
+  <div class="panel-env">
+    <h3>MUHIT</h3>
+    <div class="kv"><span>Sana</span><b id="envDate">—</b></div>
+    <div class="kv"><span>Vaqt</span><b id="envTime">—</b></div>
+    <div class="kv"><span>Ob-havo</span><b id="envWeather">22°C, ochiq osmon</b></div>
+  </div>
+
+  <!-- Kamera holati matni (B1-bosqichda faqat oddiy placeholder, haqiqiy tahlil keyingi bosqichda) -->
+  <div class="hand-status idle" id="handStatus">Kamera o'chiq</div>
+
+  <!-- Pastki status-tugmalar -->
+  <div class="statusbar">
+    <div class="pill"><span class="dot"></span>Onlayn</div>
+    <div class="pill clickable" id="micToggle"><span class="dot cyan" id="micDot"></span><span id="micLabel">Mikrofon: o'chiq</span></div>
+    <div class="pill clickable" id="camToggle"><span class="dot cyan" id="camDot"></span><span id="camLabel">Kamera: o'chiq</span></div>
+  </div>
+  <div class="mic-error" id="micError"></div>
+  <div class="camera-error" id="cameraError"></div>
+  <div class="speech-error" id="speechError"></div>
+
+  <!-- E5-bosqich: "SIZ" subtitr-kartasi (mikrofon o'chgach, aniq matn bilan BIR MARTA chiqadi) -->
+  <div class="user-caption" id="userCaption">
+    <span class="user-caption-label">SIZ</span>
+    <span class="user-caption-text" id="userCaptionText"></span>
+  </div>
+
+  <!-- E6-bosqich: "JARVIS" javob-subtitri (ovoz bilan bir vaqtda chiqadi, ovoz tugagach so'nadi) -->
+  <div class="jarvis-caption" id="jarvisCaption">
+    <span class="jarvis-caption-label">JARVIS</span>
+    <span class="jarvis-caption-text" id="jarvisCaptionText"></span>
+  </div>
+
+<script>
+  // roadmap #5 (2026-09-21, xavfsizlik): HUD bridge (8090) endi token talab
+  // qiladi — shu TOKEN `jarvis_hud/hud_token.py`dagi HUD_TOKEN bilan AYNAN
+  // BIR XIL bo'lishi SHART (qo'lda sinxron saqlanadi, ikkalasi ham lokal
+  // fayl, internetga chiqmaydi). Barcha bridge so'rovlariga shu header
+  // qo'shiladi — token bo'lmasa/noto'g'ri bo'lsa bridge 401 qaytaradi.
+  const HUD_TOKEN = '20f5af27e7f989a8e73fb99e67c58e2a9b6ca757dbb0a615';
+  const HUD_AUTH_HEADER = { 'Authorization': 'Bearer ' + HUD_TOKEN };
+
+  // 2026-09-29 (Azizbek tuzatishi): SINOV REJIMI -- faylga asoslangan,
+  // restartsiz. Bridge holatini muntazam so'raymiz, yoqilgan bo'lsa sariq
+  // banner ko'rsatamiz. O'CHIRISH FAQAT shu tugma orqali (Azizbekning
+  // qoidasi) -- boshqa hech qanday joyda /sinov_rejim/ochir chaqirilmaydi.
+  (function () {
+    const banner = document.getElementById('sinovBanner');
+    const ochirBtn = document.getElementById('sinovOchirBtn');
+    if (!banner || !ochirBtn) return;
+    async function sinovHolatiniYangila() {
+      try {
+        const r = await fetch('http://localhost:8090/sinov_rejim', { headers: HUD_AUTH_HEADER });
+        const j = await r.json();
+        banner.hidden = !j.yoqilgan;
+        window.__sinovRejimiYoqilgan = !!j.yoqilgan; // "X ga yoz" sanog'i shu bayroqni o'qiydi
+      } catch (e) {
+        // Bridge javob bermasa banner holatini o'zgartirmaymiz (eski holat qoladi)
+      }
+    }
+    ochirBtn.addEventListener('click', async () => {
+      ochirBtn.disabled = true;
+      try {
+        await fetch('http://localhost:8090/sinov_rejim/ochir', {
+          method: 'POST', headers: { ...HUD_AUTH_HEADER, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ manba: 'HUD tugmasi (index.html)' }),
+        });
+      } catch (e) { /* jim */ }
+      ochirBtn.disabled = false;
+      sinovHolatiniYangila();
+    });
+    sinovHolatiniYangila();
+    setInterval(sinovHolatiniYangila, 5000);
+  })();
+
+  // ---- O'ng panel: ovoz-spektri chiziqlari ----
+  const SPECTRUM_BARS = 26;
+  const spectrum = document.getElementById('spectrum');
+  const bars = [];
+  for (let i = 0; i < SPECTRUM_BARS; i++){
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.height = '10%';
+    spectrum.appendChild(bar);
+    bars.push(bar);
+  }
+
+  // Mikrofon ulanmaguncha (yoki ruxsat berilmasa) — tasodifiy "jonli" ko'rinish uchun zaxira animatsiya
+  let micActive = false;
+  function randomizeSpectrum(){
+    if (micActive) return;
+    bars.forEach(bar=>{
+      const h = 8 + Math.random() * 92; // %
+      bar.style.height = h + '%';
+    });
+  }
+  setInterval(randomizeSpectrum, 160);
+  randomizeSpectrum();
+
+  // ---- E5-bosqich: markaziy shar — standart holatda CSS "breathe" animatsiyasi bilan nafas oladi,
+  // lekin mikrofon YOKI Jarvisning ovozli javobi faol bo'lganda REAL ovoz balandligiga mos pulslanadi
+  // (CSS animatsiyasi vaqtincha pauza qilinib, scale/glow to'g'ridan-to'g'ri JS orqali boshqariladi). ----
+  const orbEl = document.getElementById('orb');
+  let orbReactiveActive = false;
+  function applyOrbPulse(volNorm){
+    // volNorm: taxminan 0..1 (ba'zan biroz oshib ketishi mumkin, shuning uchun clamp qilamiz)
+    const v = Math.max(0, Math.min(1, volNorm));
+    orbReactiveActive = true;
+    orbEl.style.animation = 'none';
+    const scale = 1 + v * 0.32;
+    const glowCore = 40 + v * 90;
+    const glowOuter = 100 + v * 160;
+    orbEl.style.transform = `translate(-50%,-50%) scale(${scale.toFixed(3)})`;
+    orbEl.style.boxShadow =
+      `0 0 ${glowCore.toFixed(0)}px ${(8 + v * 22).toFixed(0)}px rgba(0,212,255,${(0.35 + v * 0.45).toFixed(2)}), ` +
+      `0 0 ${glowOuter.toFixed(0)}px ${(30 + v * 40).toFixed(0)}px rgba(0,212,255,${(0.12 + v * 0.3).toFixed(2)})`;
+  }
+  function stopOrbAudioReactive(){
+    if (!orbReactiveActive) return;
+    orbReactiveActive = false;
+    orbEl.style.animation = '';
+    orbEl.style.transform = '';
+    orbEl.style.boxShadow = '';
+  }
+  function startOrbAudioReactive(){ applyOrbPulse(0); }
+
+  // Jarvis ovozda javob o'qiyotganda (bridge /speak audiosi) sharni o'sha audio balandligiga mos
+  // pulslantirish uchun alohida, mustaqil AudioContext+Analyser (mikrofon oqimidan butunlay ajratilgan).
+  let ttsAudioCtx = null, ttsRafId = null;
+  function reactOrbToAudioElement(audioEl){
+    try{
+      ttsAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ttsAudioCtx.createMediaElementSource(audioEl);
+      const ttsAnalyser = ttsAudioCtx.createAnalyser();
+      ttsAnalyser.fftSize = 128;
+      ttsAnalyser.smoothingTimeConstant = 0.7;
+      src.connect(ttsAnalyser);
+      ttsAnalyser.connect(ttsAudioCtx.destination); // tovush baribir eshitilishi kerak (faqat "tinglash" uchun ulanmagan)
+      const data = new Uint8Array(ttsAnalyser.frequencyBinCount);
+      function loop(){
+        if (audioEl.paused || audioEl.ended){ cleanupTtsReactive(); return; }
+        ttsAnalyser.getByteFrequencyData(data);
+        let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i];
+        applyOrbPulse((sum / data.length) / 255);
+        ttsRafId = requestAnimationFrame(loop);
+      }
+      loop();
+      audioEl.addEventListener('ended', cleanupTtsReactive, { once: true });
+      audioEl.addEventListener('error', cleanupTtsReactive, { once: true });
+    } catch (e){
+      console.warn('[JARVIS shar] TTS audio-reaktiv pulslanishni ulab bo\'lmadi (kosmetik, javob baribir eshitiladi):', e.message || e);
+    }
+  }
+  function cleanupTtsReactive(){
+    if (ttsRafId) cancelAnimationFrame(ttsRafId);
+    ttsRafId = null;
+    if (ttsAudioCtx){ try{ ttsAudioCtx.close(); } catch(e){} }
+    ttsAudioCtx = null;
+    if (!micActive) stopOrbAudioReactive(); // mikrofon shu payt ochiq bo'lmasa, sharni asl nafas holatiga qaytaramiz
+  }
+
+  // ---- 2-guruh: haqiqiy mikrofon (Web Audio API — getUserMedia + AnalyserNode) ----
+  const micToggle = document.getElementById('micToggle');
+  const micDot = document.getElementById('micDot');
+  const micLabel = document.getElementById('micLabel');
+  const micErrorBox = document.getElementById('micError');
+  let audioCtx = null, micStream = null, analyser = null, rafId = null;
+  // E4-bosqich: mikrofon davomida audio yozib olinadi (MediaRecorder), mikrofon o'chganda
+  // serverga (Google STT + mahalliy Whisper) yuborilib, brauzerning o'z SpeechRecognition'idan
+  // aniqroq matn olinadi — bu asosiy "eshitish" manbai, brauzer natijasi faqat jonli ko'rsatish
+  // (interim matn) va server ishlamay qolganda zaxira sifatida ishlatiladi.
+  let mediaRecorder = null, recordedChunks = [];
+
+  function showMicError(msg){
+    micErrorBox.textContent = msg;
+    micErrorBox.style.display = 'block';
+  }
+  function hideMicError(){
+    micErrorBox.style.display = 'none';
+  }
+  function setMicUI(state){
+    // state: 'off' | 'on' | 'error'
+    micDot.classList.remove('cyan', 'red', 'pulse');
+    if (state === 'on'){
+      micDot.style.background = 'var(--green)';
+      micDot.style.boxShadow = '0 0 8px var(--green)';
+      micDot.classList.add('pulse');
+      micLabel.textContent = "Mikrofon: yoqilgan (bosib o'chiring)";
+    } else if (state === 'error'){
+      micDot.classList.add('red');
+      micDot.style.background = ''; micDot.style.boxShadow = '';
+      micLabel.textContent = 'Mikrofon: ruxsat berilmadi';
+    } else {
+      micDot.classList.add('cyan');
+      micDot.style.background = ''; micDot.style.boxShadow = '';
+      micLabel.textContent = 'Mikrofon: o\'chiq (bosing)';
+    }
+  }
+
+  // ==== E1-bosqich: ovozni matnga aylantirish (brauzerning o'z SpeechRecognition API'si, kutubxonasiz) ====
+  // Hali hech narsa Jarvisga yuborilmaydi — bu faqat "eshityapman va matnga aylantiryapman" bosqichi (javob E2'da).
+  const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const transcriptTextEl = document.getElementById('transcriptText');
+  const speechErrorBox = document.getElementById('speechError');
+
+  function showSpeechError(msg){ speechErrorBox.textContent = msg; speechErrorBox.style.display = 'block'; }
+  function hideSpeechError(){ speechErrorBox.style.display = 'none'; }
+  function setTranscriptText(text){
+    transcriptTextEl.textContent = text && text.trim() ? text.trim() : '...';
+    transcriptTextEl.scrollTop = transcriptTextEl.scrollHeight; // yangi matn kelganda oxirigacha avtomatik pastga tushirish
+  }
+
+  // E5-bosqich: mikrofon yoqilgan paytda XOM (brauzer SpeechRecognition) natija UMUMAN ko'rsatilmaydi —
+  // demo paytida "avval chalkash, keyin to'g'ri matn" taassurotining oldini olish uchun. Buning o'rniga
+  // shu ikki animatsion holat ko'rsatiladi, aniq matn faqat BIR MARTA (pastdagi caption-kartada) chiqadi.
+  function setListeningIndicatorUI(){
+    transcriptTextEl.innerHTML = 'Eshityapman<span class="listening-dots"><span></span><span></span><span></span></span>';
+  }
+  function setProcessingIndicatorUI(){
+    transcriptTextEl.innerHTML = 'Tahlil qilinmoqda<span class="listening-dots"><span></span><span></span><span></span></span>';
+  }
+
+  const userCaptionEl = document.getElementById('userCaption');
+  const userCaptionTextEl = document.getElementById('userCaptionText');
+  let userCaptionHideTimer = null;
+  function showUserCaption(text){
+    userCaptionTextEl.textContent = text;
+    userCaptionEl.classList.add('show');
+    if (userCaptionHideTimer) clearTimeout(userCaptionHideTimer);
+    userCaptionHideTimer = setTimeout(() => userCaptionEl.classList.remove('show'), 8000);
+  }
+  function hideUserCaption(){
+    userCaptionEl.classList.remove('show');
+    if (userCaptionHideTimer) clearTimeout(userCaptionHideTimer);
+  }
+
+  const confirmCaptionEl = document.getElementById('confirmCaption');
+  let confirmCaptionHideTimer = null;
+  function showConfirmCaption(){
+    confirmCaptionEl.classList.add('show');
+    if (confirmCaptionHideTimer) clearTimeout(confirmCaptionHideTimer);
+    confirmCaptionHideTimer = setTimeout(() => confirmCaptionEl.classList.remove('show'), 2600);
+  }
+
+  // E6-bosqich: "JARVIS" javob-subtitri — ovoz (bridge /speak yoki browser TTS) BOSHLANGANDA
+  // chaqiriladi (matn+ovoz bir vaqtda), ovoz tugagach biroz turib (hideJarvisCaptionSoon) so'nadi.
+  const jarvisCaptionEl = document.getElementById('jarvisCaption');
+  const jarvisCaptionTextEl = document.getElementById('jarvisCaptionText');
+  let jarvisCaptionHideTimer = null;
+  function showJarvisCaption(text){
+    if (jarvisCaptionHideTimer){ clearTimeout(jarvisCaptionHideTimer); jarvisCaptionHideTimer = null; }
+    hideUserCaption(); // e'tibor endi Jarvis javobiga o'tadi -- ikkalasi bir vaqtda ko'rinmasin
+    jarvisCaptionTextEl.textContent = text;
+    jarvisCaptionEl.classList.add('show');
+  }
+  function hideJarvisCaptionSoon(delayMs){
+    if (jarvisCaptionHideTimer) clearTimeout(jarvisCaptionHideTimer);
+    jarvisCaptionHideTimer = setTimeout(() => jarvisCaptionEl.classList.remove('show'), delayMs || 1200);
+  }
+  function hideJarvisCaptionNow(){
+    if (jarvisCaptionHideTimer){ clearTimeout(jarvisCaptionHideTimer); jarvisCaptionHideTimer = null; }
+    jarvisCaptionEl.classList.remove('show');
+  }
+
+  // uz-UZ ko'p brauzerda hali yo'q — qo'llab-quvvatlanmasa ru-RU'ga, undan keyin en-US'ga tushiriladi
+  const STT_LANGS = ['uz-UZ', 'ru-RU', 'en-US'];
+  let sttLangIndex = 0;
+  let recognition = null;
+  let recognitionShouldRun = false; // mikrofon tugmasi orqali belgilangan "maqsad" holat
+  let accumulatedTranscript = '';   // shu sessiyada to'plangan yakuniy (final) matn
+
+  function buildRecognition(){
+    const rec = new SpeechRecognitionCtor();
+    rec.lang = STT_LANGS[sttLangIndex];
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    rec.onresult = (event) => {
+      // E5-bosqich: interim/final matn endi UI'ga chiqarilmaydi (Eshityapman-animatsiyasi buning o'rnida) —
+      // faqat final bo'laklar fonda accumulatedTranscript'ga to'planadi (Google STT/Whisper ishlamay
+      // qolgan holatda zaxira sifatida ishlatiladi).
+      let finalChunk = '';
+      for (let i = event.resultIndex; i < event.results.length; i++){
+        const res = event.results[i];
+        if (res.isFinal) finalChunk += res[0].transcript;
+      }
+      if (finalChunk.trim()){
+        accumulatedTranscript = (accumulatedTranscript + ' ' + finalChunk.trim()).trim();
+      }
+    };
+
+    rec.onerror = (event) => {
+      // Ba'zi brauzerlar tanlangan tilni qo'llab-quvvatlamasa shu xatoni beradi — keyingi tilga o'tamiz
+      if (event.error === 'language-not-supported' && sttLangIndex < STT_LANGS.length - 1){
+        const eskiTil = STT_LANGS[sttLangIndex];
+        sttLangIndex++;
+        showSpeechError(`Til (${eskiTil}) qo'llab-quvvatlanmadi — ${STT_LANGS[sttLangIndex]} bilan qayta urinilmoqda...`);
+        restartRecognition();
+        return;
+      }
+      if (event.error === 'no-speech' || event.error === 'aborted'){
+        return; // jiddiy emas — jim turish yoki oddiy to'xtash, e'tibor bermaymiz
+      }
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed'){
+        showSpeechError("Ovozni tanish uchun mikrofonga ruxsat berilmadi.");
+      } else {
+        showSpeechError(`Ovozni matnga aylantirishda xato: ${event.error}`);
+      }
+    };
+
+    rec.onend = () => {
+      // Ba'zi brauzerlarda tanish o'z-o'zidan to'xtaydi — mikrofon hali yoqiq bo'lsa, qayta ishga tushiramiz
+      if (recognitionShouldRun){
+        try{ rec.start(); } catch (e){ /* allaqachon ishga tushgan bo'lishi mumkin, e'tiborsiz qoldiramiz */ }
+      }
+    };
+
+    return rec;
+  }
+
+  function restartRecognition(){
+    if (recognition){ try{ recognition.stop(); } catch (e){} }
+    recognition = buildRecognition();
+    try{ recognition.start(); } catch (e){ showSpeechError(`Ovoz-tanishni qayta ishga tushirib bo'lmadi: ${e.message || e}`); }
+  }
+
+  function startSpeech(){
+    if (!SpeechRecognitionCtor){
+      showSpeechError("Ushbu brauzer ovozni matnga aylantirish (SpeechRecognition) API'sini qo'llab-quvvatlamaydi — Chrome yoki Edge brauzeridan foydalaning.");
+      return;
+    }
+    hideSpeechError();
+    sttLangIndex = 0;
+    accumulatedTranscript = '';
+    setListeningIndicatorUI();
+    recognitionShouldRun = true;
+    recognition = buildRecognition();
+    try{
+      recognition.start();
+    } catch (err){
+      showSpeechError(`Ovoz-tanishni ishga tushirib bo'lmadi: ${err.message || err}`);
+    }
+  }
+
+  function stopSpeech(){
+    recognitionShouldRun = false;
+    if (recognition){ try{ recognition.stop(); } catch (e){} }
+    recognition = null;
+  }
+
+  async function startMic(){
+    hideMicError();
+    tozalaSuhbat(); // yangi savol-javob sikli "toza sahifadan" boshlansin — oldingi matn/javob tozalanadi
+    try{
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      startSpeech(); // audio-spektr bilan bir vaqtda ovoz-tanish (jonli, taxminiy matn) ham ishga tushadi
+
+      // E4-bosqich: aynan shu audio server orqali aniqroq matnga aylantiriladi (mikrofon o'chganda)
+      recordedChunks = [];
+      mediaRecorder = null;
+      try{
+        const mimeType = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
+          ? 'audio/webm;codecs=opus' : 'audio/webm';
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported(mimeType)){
+          mediaRecorder = new MediaRecorder(micStream, { mimeType });
+          mediaRecorder.addEventListener('dataavailable', (e) => {
+            if (e.data && e.data.size) recordedChunks.push(e.data);
+          });
+          mediaRecorder.start();
+        }
+      } catch (e){
+        console.warn('[JARVIS eshitish] MediaRecorder ishga tushmadi, faqat brauzer SpeechRecognition natijasi ishlatiladi:', e.message || e);
+        mediaRecorder = null;
+      }
+
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      const source = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 128;                 // 64 ta chastota-bin beradi
+      analyser.smoothingTimeConstant = 0.72;   // silliqroq harakat uchun
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      micActive = true;
+      setMicUI('on');
+      startOrbAudioReactive(); // E5-bosqich: shar endi CSS-nafas o'rniga real ovoz balandligiga mos pulslanadi
+
+      // Ovoz chastota diapazonining pastki ~75%i (bass/ovoz diapazoni) 26 ta ustunga guruhlanadi
+      const usableBins = Math.floor(dataArray.length * 0.75);
+      const bucketSize = usableBins / SPECTRUM_BARS;
+
+      function draw(){
+        if (!micActive) return;
+        analyser.getByteFrequencyData(dataArray);
+        let volSum = 0;
+        for (let i = 0; i < SPECTRUM_BARS; i++){
+          const start = Math.floor(i * bucketSize);
+          const end = Math.max(start + 1, Math.floor((i + 1) * bucketSize));
+          let sum = 0, count = 0;
+          for (let j = start; j < end; j++){ sum += dataArray[j]; count++; }
+          const avg = count ? sum / count : 0;
+          volSum += avg;
+          const pct = Math.max(6, Math.min(100, (avg / 255) * 135));
+          bars[i].style.height = pct + '%';
+        }
+        applyOrbPulse(volSum / SPECTRUM_BARS / 255); // 0..1 oralig'idagi o'rtacha ovoz balandligi
+        rafId = requestAnimationFrame(draw);
+      }
+      draw();
+    } catch (err){
+      micActive = false;
+      setMicUI('error');
+      stopSpeech();
+      showMicError(`Mikrofonga ulanib bo'lmadi: ${err.name || 'xato'} — ${err.message || err}. ` +
+        `Brauzer ruxsat so'rovini tasdiqlaganingizni va sahifa http://localhost orqali (file:// emas) ochilganini tekshiring.`);
+    }
+  }
+
+  async function stopMic(){
+    micActive = false;
+    if (rafId) cancelAnimationFrame(rafId);
+    stopOrbAudioReactive(); // shar CSS-nafas rejimiga qaytadi
+
+    // E4-bosqich: MediaRecorder'ni to'xtatib, to'liq yozilgan audio blobni olamiz (agar ishlagan bo'lsa).
+    // Buni micStream'ni to'xtatishdan OLDIN qilamiz — aks holda oxirgi audio bo'lagi yo'qolishi mumkin.
+    let recordedBlob = null;
+    if (mediaRecorder && mediaRecorder.state !== 'inactive'){
+      const rec = mediaRecorder;
+      recordedBlob = await new Promise((resolve) => {
+        rec.addEventListener('stop', () => {
+          resolve(recordedChunks.length ? new Blob(recordedChunks, { type: rec.mimeType || 'audio/webm' }) : null);
+        }, { once: true });
+        try{ rec.stop(); } catch (e){ resolve(null); }
+      });
+    }
+    mediaRecorder = null;
+    recordedChunks = [];
+
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    if (audioCtx) audioCtx.close();
+    audioCtx = null; micStream = null; analyser = null;
+    setMicUI('off');
+    stopSpeech();
+
+    // Yozilgan audio bo'lsa — serverga (Google STT + mahalliy Whisper) yuborib, aniqroq matn olishga
+    // urinamiz. Muvaffaqiyatsiz/vaqt tugasa — jim, brauzerning o'z (Web Speech API) natijasi qoladi.
+    // E5-bosqich: audio yozib olindi, endi serverda tahlil qilinmoqda — bu bosqichda ham xom matn
+    // ko'rsatilmaydi, faqat "Tahlil qilinmoqda..." indikatori (aniq matn pastda BIR MARTA chiqadi).
+    if (recordedBlob && recordedBlob.size){
+      setProcessingIndicatorUI();
+      const aniqroqMatn = await transcribeViaBridge(recordedBlob);
+      if (aniqroqMatn){
+        accumulatedTranscript = aniqroqMatn;
+      }
+    }
+
+    const yakuniyMatn = (accumulatedTranscript || '').trim();
+    if (yakuniyMatn){
+      showUserCaption(yakuniyMatn);   // pastdan suzib chiqadigan "SIZ" subtitr-kartasi, BIR MARTA
+      setTranscriptText(yakuniyMatn); // chap paneldagi log ham (tarix uchun) yangilanadi
+      submitTranscript();             // mikrofon o'chirilganda to'plangan matn bo'lsa — avtomatik Jarvisga yuboriladi
+    } else {
+      setTranscriptText('...');
+    }
+  }
+
+  micToggle.addEventListener('click', () => {
+    if (micActive) stopMic(); else startMic();
+  });
+  setMicUI('off');
+
+  // ---- Chap panel: HAQIQIY tizim ma'lumoti (psutil, bridge /tizim orqali) ----
+  // Avval Math.random() bilan to'qib chiqarilardi (kod ichida ochiq "hali haqiqiy
+  // tizim ma'lumoti emas" deb yozilgan edi) -- endi Task Manager bilan bir xil
+  // manbadan (Windows'ning o'zi) olinadi.
+  const cpuEl = document.getElementById('cpuVal');
+  const memEl = document.getElementById('memVal');
+  const TIZIM_URL = 'http://localhost:8090/tizim';
+  async function tizimNiYangila(){
+    try{
+      const res = await fetch(TIZIM_URL, { method: 'GET', headers: HUD_AUTH_HEADER });
+      if (!res.ok) return;
+      const d = await res.json();
+      if (typeof d.cpu === 'number') cpuEl.textContent = d.cpu + '%';
+      if (typeof d.xotira === 'number') memEl.textContent = d.xotira + '%';
+    } catch (e) {
+      // Bridge vaqtincha javob bermasa panel eski qiymatida qoladi (asosiy
+      // funksiyalarga ta'sir qilmaydi, faqat kosmetik panel).
+    }
+  }
+  setInterval(tizimNiYangila, 2200);
+  tizimNiYangila();
+
+  const startTime = Date.now();
+  const uptimeEl = document.getElementById('uptimeVal');
+  function tickUptime(){
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    const hh = String(Math.floor(s/3600)).padStart(2,'0');
+    const mm = String(Math.floor((s%3600)/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    uptimeEl.textContent = `${hh}:${mm}:${ss}`;
+  }
+  setInterval(tickUptime, 1000);
+
+  // ---- 3-guruh: Muhit paneli — sana/vaqt HAQIQIY (JS Date orqali), ob-havo esa statik namuna ----
+  // Eslatma: ob-havo qiymati ("22°C, ochiq osmon") hozircha faqat kosmetik — real ob-havo API'siga ulanmagan.
+  const envDateEl = document.getElementById('envDate');
+  const envTimeEl = document.getElementById('envTime');
+  function tickEnvClock(){
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2,'0');
+    const mm = String(now.getMonth()+1).padStart(2,'0');
+    const yyyy = now.getFullYear();
+    envDateEl.textContent = `${dd}.${mm}.${yyyy}`;
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mi = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    envTimeEl.textContent = `${hh}:${mi}:${ss}`;
+  }
+  setInterval(tickEnvClock, 1000);
+  tickEnvClock();
+
+  // ==== B2-BOSQICH: kamera + MediaPipe Hands skeleti (hali imo-ishora klassifikatsiyasi yo'q) ====
+  const camToggle = document.getElementById('camToggle');
+  const camDot = document.getElementById('camDot');
+  const camLabel = document.getElementById('camLabel');
+  const cameraErrorBox = document.getElementById('cameraError');
+  const camPreview = document.getElementById('camPreview');
+  const camVideo = document.getElementById('camVideo');
+  const camCanvas = document.getElementById('camCanvas');
+  const camCtx = camCanvas.getContext('2d');
+  const handStatusEl = document.getElementById('handStatus');
+
+  let camActive = false;
+  let camStream = null;
+  let handsModel = null;
+  let handsReady = false;
+  let camRafId = null;
+
+  function showCameraError(msg){ cameraErrorBox.textContent = msg; cameraErrorBox.style.display = 'block'; }
+  function hideCameraError(){ cameraErrorBox.style.display = 'none'; }
+
+  function setCamUI(state){
+    // state: 'off' | 'loading' | 'on' | 'error'
+    camDot.classList.remove('cyan', 'red', 'pulse');
+    if (state === 'on'){
+      camDot.style.background = 'var(--green)'; camDot.style.boxShadow = '0 0 8px var(--green)';
+      camDot.classList.add('pulse');
+      camLabel.textContent = "Kamera: yoqilgan (bosib o'chiring)";
+    } else if (state === 'loading'){
+      camDot.classList.add('cyan');
+      camDot.style.background = ''; camDot.style.boxShadow = '';
+      camLabel.textContent = 'Kamera: ulanmoqda...';
+    } else if (state === 'error'){
+      camDot.classList.add('red');
+      camDot.style.background = ''; camDot.style.boxShadow = '';
+      camLabel.textContent = 'Kamera: ruxsat berilmadi';
+    } else {
+      camDot.classList.add('cyan');
+      camDot.style.background = ''; camDot.style.boxShadow = '';
+      camLabel.textContent = "Kamera: o'chiq (bosing)";
+    }
+  }
+
+  function setHandStatus(text, idle){
+    handStatusEl.textContent = text;
+    handStatusEl.classList.toggle('idle', !!idle);
+  }
+
+  // ---- B3-bosqich: 21 nuqta orasidagi masofa asosida oddiy geometrik imo-ishora klassifikatsiyasi ----
+  // Tashqi kutubxona shart emas — MediaPipe faqat nuqta koordinatalarini beradi, hisoblash oddiy Math.hypot bilan.
+  function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y); }
+
+  function classifyGesture(lm){
+    const palmBase = lm[0];                       // kaft asosi (bilak)
+    const handSize = dist(lm[0], lm[9]) || 0.15;   // masshtab-mustaqil bo'lishi uchun tayanch masofa (bilak -> o'rta barmoq asosi)
+
+    // Pinch — bosh (4) va ko'rsatkich (8) barmoq uchlari kaft kengligiga nisbatan juda yaqin bo'lsa, ustuvor tekshiriladi
+    // pinchDist'ni ham qaytaramiz — C2-bosqichda 3D obyekt scale'ini shu qiymatga proporsional qilish uchun kerak
+    const pinchDist = dist(lm[4], lm[8]) / handSize;
+
+    // Real o'lchov shuni ko'rsatdi: bosh barmoq (4) boshqa 4 tadan tabiiy ravishda farq qiladi (qisqaroq,
+    // bilakka yaqinroq — hatto yozilganda ham FAR_THRESH'ga yetmaydi), shuning uchun musht/ochiq-kaft
+    // klassifikatsiyasidan chiqarib tashlandi — faqat pinch hisobida (yuqorida) ishlatiladi.
+    const tips = [8, 12, 16, 20]; // ko'rsatkich, o'rta, nomsiz, jimjiloq
+    const tipRatios = tips.map(i => dist(lm[i], palmBase) / handSize);
+    const thumbRatio = dist(lm[4], palmBase) / handSize; // faqat debug/ma'lumot uchun, klassifikatsiyaga kirmaydi
+
+    if (pinchDist < 0.35) return { type: 'pinch', pinchDist, tipRatios, thumbRatio };
+
+    const CLOSE_THRESH = 1.1;  // shu nisbatdan yaqin bo'lsa — bukilgan (musht) — 2 real o'lchov bilan tasdiqlangan
+    const FAR_THRESH   = 1.6;  // shu nisbatdan uzoq bo'lsa — yozilgan (ochiq kaft) — 2 real o'lchov bilan tasdiqlangan
+    let closeCount = 0, farCount = 0;
+    tipRatios.forEach(ratio => {
+      if (ratio < CLOSE_THRESH) closeCount++;
+      else if (ratio > FAR_THRESH) farCount++;
+    });
+
+    if (closeCount === tips.length) return { type: 'fist', pinchDist, tipRatios, thumbRatio };
+    if (farCount === tips.length) return { type: 'open', pinchDist, tipRatios, thumbRatio };
+    return { type: null, pinchDist, tipRatios, thumbRatio }; // oraliq/aniq bo'lmagan holat
+  }
+
+  function gestureLabel(type){
+    if (type === 'fist') return 'Musht aniqlandi';
+    if (type === 'open') return 'Ochiq kaft aniqlandi';
+    if (type === 'pinch') return "Pinch (qisish) aniqlandi";
+    return "Qo'l aniqlanmadi";
+  }
+
+  // ---- C2-bosqich: B3'dagi imo-ishora natijasini C1'dagi 3D wireframe'ga bog'lovchi umumiy holat ----
+  // Bu ikkita "maqsad" qiymat — Three.js'ning animate() sikli har freymda shu maqsadlarga silliq (lerp) yaqinlashadi.
+  // Shu bilan gesture aniqlash tezligi past bo'lsa ham (masalan MediaPipe har freymda ishlamasa), animatsiya baribir silliq bo'ladi.
+  let targetSpeedMultiplier = 1;  // 0 = to'xtagan, 1 = oddiy tezlik, 2 = ochiq kaftdagi tezlashgan aylanish
+  let targetScale = 1;            // 0.7..1.6 oralig'ida — pinch bilan boshqariladi
+
+  function updateWireframeTargets(type, pinchDist){
+    if (type === 'open'){
+      targetSpeedMultiplier = 2;   // "faol boshqaruv" hissi uchun 2 barobar tezroq
+      targetScale = 1;
+    } else if (type === 'fist'){
+      targetSpeedMultiplier = 0;   // aylanish to'xtaydi, obyekt joyida qotadi
+      targetScale = 1;
+    } else if (type === 'pinch'){
+      targetSpeedMultiplier = 1;   // tezlik oddiy holatda qoladi, faqat o'lcham o'zgaradi
+      // pinchDist odatda 0 (barmoqlar tegib turibdi) dan ~0.35 (pinch deb hisoblanadigan yuqori chegara) gacha bo'ladi.
+      // Buni 0.7x..1.6x oralig'idagi scale'ga chiziqli proyeksiya qilamiz: barmoqlar qanchalik yaqin bo'lsa,
+      // obyekt shunchalik kichik; barmoqlar (pinch ichida) ochilgan sari kattalashadi.
+      const PINCH_MAX = 0.35;
+      const t = Math.min(Math.max(pinchDist, 0), PINCH_MAX) / PINCH_MAX; // 0..1 ga normallashtirish
+      targetScale = 0.7 + t * (1.6 - 0.7);
+    } else {
+      targetSpeedMultiplier = 1;   // qo'l aniqlanmasa — oddiy holatga qaytadi
+      targetScale = 1;
+    }
+  }
+
+  // Matn holatini har freymda emas, 350ms'da bir marta yangilaymiz — aks holda titrab/chayqalib turadi.
+  // Skelet chizig'i va 3D-boshqaruv maqsadlari esa silliq bo'lishi uchun har freymda yangilanadi.
+  const GESTURE_UPDATE_MS = 350;
+  let lastGestureUpdate = 0;
+
+  function onHandsResults(results){
+    camCtx.save();
+    camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
+    let gesture = null;
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
+      for (const lm of results.multiHandLandmarks){
+        drawConnectors(camCtx, lm, HAND_CONNECTIONS, { color: '#00d4ff', lineWidth: 2 });
+        drawLandmarks(camCtx, lm, { color: '#ffffff', lineWidth: 1, radius: 2 });
+      }
+      gesture = classifyGesture(results.multiHandLandmarks[0]);
+    }
+    camCtx.restore();
+
+    const type = gesture ? gesture.type : null;
+    updateWireframeTargets(type, gesture ? gesture.pinchDist : 0);
+
+    const now = performance.now();
+    if (now - lastGestureUpdate >= GESTURE_UPDATE_MS){
+      lastGestureUpdate = now;
+      setHandStatus(gestureLabel(type), type === null);
+    }
+  }
+
+  // Model yuklanishini kutish uchun timeout bilan o'raymiz — CDN/internet muammosida dastur qotib qolmasin
+  function withTimeout(promise, ms, timeoutMsg){
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(timeoutMsg)), ms))
+    ]);
+  }
+
+  async function ensureHandsModel(){
+    if (handsModel) return;
+    if (typeof Hands === 'undefined'){
+      throw new Error("MediaPipe Hands kutubxonasi yuklanmadi (CDN'dan script topilmadi)");
+    }
+    const model = new Hands({
+      // E7-bosqich: CDN o'rniga lokal vendor/ papkasidan (internetsiz ham ishlashi uchun)
+      locateFile: (file) => `vendor/mediapipe/hands/${file}`
+    });
+    model.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      // E7-bosqich (2026-09-13): 0.6/0.6 dan MediaPipe'ning o'z standart qiymati 0.5/0.5'ga
+      // tushirildi — demo sinovida (oddiy xona yorug'ligida) 0.6 ba'zan qo'lni "aniqlanmadi"
+      // deb qoldirib ketishi kuzatildi. 0.5 aniqlash ehtimolini oshiradi, gesture'ning o'zi
+      // (classifyGesture) baribir CLOSE/FAR chegaralar + 350ms yumshatish bilan barqaror qoladi.
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    model.onResults(onHandsResults);
+    // initialize() modelning wasm/binarypb fayllarini CDN'dan yuklaydi — internet bo'lmasa osilib qolishi mumkin,
+    // shuning uchun 12 soniyalik timeout bilan cheklaymiz
+    await withTimeout(model.initialize(), 12000, "MediaPipe modeli yuklanish vaqti tugadi (CDN javob bermadi)");
+    handsModel = model;
+    handsReady = true;
+  }
+
+  async function camLoop(){
+    if (!camActive || !handsReady) return;
+    if (camVideo.readyState >= 2){
+      try{
+        await handsModel.send({ image: camVideo });
+      } catch (sendErr){
+        console.error('MediaPipe kadr tahlilida xato:', sendErr);
+      }
+    }
+    camRafId = requestAnimationFrame(camLoop);
+  }
+
+  async function startCam(){
+    hideCameraError();
+    setCamUI('loading');
+    try{
+      camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      camVideo.srcObject = camStream;
+      await camVideo.play();
+      camActive = true;
+      camPreview.style.display = 'block';
+      handStatusEl.style.display = 'block';
+      setCamUI('on');
+      setHandStatus("Qo'l aniqlanmadi", true);
+    } catch (err){
+      camActive = false;
+      setCamUI('error');
+      let sabab = err.message || String(err);
+      if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError'){
+        sabab = "Kamera topilmadi — qurilmada veb-kamera ulanganini tekshiring.";
+      } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'){
+        sabab = "Kameraga ruxsat rad etildi — brauzer sozlamalarida ruxsat berilishi kerak.";
+      } else if (err.name === 'NotReadableError'){
+        sabab = "Kameraga ulanib bo'lmadi — u boshqa dastur tomonidan band bo'lishi mumkin.";
+      }
+      showCameraError(`Kameraga ulanib bo'lmadi: ${sabab} ` +
+        `Sahifa http://localhost orqali (file:// emas) ochilganini ham tekshiring.`);
+      return;
+    }
+
+    // Kamera video muvaffaqiyatli ishga tushdi — endi MediaPipe modelini alohida yuklaymiz.
+    // Bu yerda xato bo'lsa ham video ko'rinishda davom etadi, faqat skelet chizilmaydi.
+    try{
+      await ensureHandsModel();
+      camLoop();
+    } catch (modelErr){
+      showCameraError(`MediaPipe modelini yuklab bo'lmadi: ${modelErr.message || modelErr}. ` +
+        `Internet aloqasini yoki CDN (jsdelivr.net)ga ulanishni tekshiring. Kamera video ko'rinishi davom etmoqda, faqat skelet chizig'i bo'lmaydi.`);
+    }
+  }
+
+  function stopCam(){
+    camActive = false;
+    if (camRafId) cancelAnimationFrame(camRafId);
+    camRafId = null;
+    if (camStream) camStream.getTracks().forEach(t => t.stop());
+    camStream = null;
+    camVideo.srcObject = null;
+    camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
+    camPreview.style.display = 'none';
+    handStatusEl.style.display = 'none';
+    setCamUI('off');
+    // Kamera o'chirilganda 3D obyekt ham oddiy holatga (asl tezlik, asl o'lcham) silliq qaytsin
+    targetSpeedMultiplier = 1;
+    targetScale = 1;
+  }
+
+  camToggle.addEventListener('click', () => {
+    if (camActive) stopCam(); else startCam();
+  });
+  setCamUI('off');
+
+  // ==== C1-BOSQICH: statik 3D wireframe obyekt (Three.js) — hali boshqaruvsiz, mustaqil aylanadi ====
+  // Diqqat: B3'dagi qo'l-klassifikatsiyaga hali ulanmagan — bog'lash C2-bosqichda bo'ladi.
+  const threeErrorBox = document.getElementById('threeError');
+  function showThreeError(msg){ threeErrorBox.textContent = msg; threeErrorBox.style.display = 'block'; }
+
+  function initWireframe(){
+    const canvas = document.getElementById('wireCanvas');
+    const size = 300; // .wire-canvas CSS o'lchamiga mos
+
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(size, size);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.z = 3.2;
+
+    const geometry = new THREE.IcosahedronGeometry(1.35, 0);
+    const material = new THREE.MeshBasicMaterial({ color: 0x00d4ff, wireframe: true });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+
+    // C2-bosqich: asosiy aylanish tezligi shu qiymatlar — targetSpeedMultiplier ularga ko'paytiriladi
+    const BASE_ROT_X = 0.0035;
+    const BASE_ROT_Y = 0.005;
+    const LERP_FACTOR = 0.12; // har freymda joriy qiymatdan maqsadga ~12% yaqinlashadi — keskin sakrash bo'lmaydi
+    let currentSpeedMultiplier = 1;
+    let currentScale = 1;
+
+    function animate(){
+      // targetSpeedMultiplier / targetScale — B3 qo'l-klassifikatsiyasi (onHandsResults) tomonidan yangilanadi
+      currentSpeedMultiplier += (targetSpeedMultiplier - currentSpeedMultiplier) * LERP_FACTOR;
+      currentScale += (targetScale - currentScale) * LERP_FACTOR;
+
+      mesh.rotation.x += BASE_ROT_X * currentSpeedMultiplier;
+      mesh.rotation.y += BASE_ROT_Y * currentSpeedMultiplier;
+      mesh.scale.setScalar(currentScale);
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+  }
+
+  if (typeof THREE === 'undefined'){
+    showThreeError("Three.js kutubxonasi yuklanmadi (CDN'dan script topilmadi). Internet aloqasini yoki CDN (jsdelivr.net)ga ulanishni tekshiring — 3D obyekt ko'rinmaydi, qolgan interfeys ishlashda davom etadi.");
+  } else {
+    try{
+      initWireframe();
+    } catch (threeErr){
+      showThreeError(`3D obyektni chizib bo'lmadi: ${threeErr.message || threeErr}. Brauzeringiz WebGL'ni qo'llab-quvvatlamasligi mumkin.`);
+    }
+  }
+
+  // ==== E2/E3-BOSQICH: to'plangan matnni jarvis_hud_bridge.py'ga (port 8090) yuboradi ====
+  // "Yuborish" tugmasi olib tashlandi — endi mikrofon o'chirilganda (stopMic) avtomatik
+  // yuboriladi (pastda submitTranscript()). jarvis_core.py/jarvis_telegram.py'ga hech narsa
+  // yozilmagan, bridge alohida jarayon sifatida ishlaydi.
+  const clearBtn = document.getElementById('clearBtn');
+  const panelAnswer = document.getElementById('panelAnswer');
+  const answerTextEl = document.getElementById('answerText');
+  const BRIDGE_URL = 'http://localhost:8090/ask';
+  const AMALLAR_URL = 'http://localhost:8090/amallar';
+  const SHAXSIY_BEKOR_URL = 'http://localhost:8090/shaxsiy/bekor';
+  const SHAXSIY_HOLAT_URL = 'http://localhost:8090/shaxsiy/holat';
+  const SHAXSIY_TAKROR_HA_URL = 'http://localhost:8090/shaxsiy/takror_ha';
+  const SHAXSIY_TAKROR_YOQ_URL = 'http://localhost:8090/shaxsiy/takror_yoq';
+  const shaxsiyYozishEl = document.getElementById('shaxsiyYozishEl');
+
+  function escapeHtmlLocal(s){
+    const div = document.createElement('div');
+    div.textContent = s == null ? '' : String(s);
+    return div.innerHTML;
+  }
+
+  // "<ism>ga ... deb yoz" -- 2026-09-28, Azizbek buyrug'i: bridge tasdiq
+  // kutayotgan topshiriq qaytarsa, shu yerda soniyalab hisoblab, "X Bekor"
+  // tugmasi bilan ko'rsatamiz. Haqiqiy yuborish/kutish serverning o'zida
+  // (bridge, alohida oqim) ketadi -- shu UI faqat KO'RSATISH uchun, sahifa
+  // yopilsa ham yuborish TO'XTAMAYDI.
+  function shaxsiyYozishNiKorsat(info){
+    shaxsiyYozishEl.style.display = 'block';
+    let qolgan = info.soniya || 5;
+    let taymer = null;
+    const chiz = () => {
+      shaxsiyYozishEl.innerHTML =
+        '<div style="margin-top:8px;padding:10px 14px;border:1px solid rgba(255,255,255,.25);border-radius:10px;">' +
+        '<b>' + escapeHtmlLocal(info.ism) + '</b>' +
+        (info.username ? ' (@' + escapeHtmlLocal(info.username) + ')' : '') +
+        (info.oxirgi_xabar ? ', oxirgi yozishma: ' + escapeHtmlLocal(info.oxirgi_xabar) : ', avval yozishmagansiz') +
+        ' ga:<br>&laquo;' + escapeHtmlLocal(info.matn) + '&raquo;<br>' +
+        (window.__sinovRejimiYoqilgan ? '<b style="color:#f5c518">[SINOV]</b> ' : '') +
+        '<span id="shaxsiyCountdown">' + qolgan + ' soniyada yuboriladi...</span> ' +
+        '<button id="shaxsiyBekorBtn" type="button">❌ Bekor</button></div>';
+      const btn = document.getElementById('shaxsiyBekorBtn');
+      if (btn) btn.onclick = async function(){
+        if (taymer) clearInterval(taymer);
+        try{
+          await fetch(SHAXSIY_BEKOR_URL, {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, HUD_AUTH_HEADER),
+            body: JSON.stringify({ id: info.id }),
+          });
+        }catch(e){}
+        shaxsiyYozishEl.innerHTML = '<i>❌ Bekor qilindi.</i>';
+        setTimeout(() => { shaxsiyYozishEl.style.display = 'none'; }, 3000);
+      };
+    };
+    chiz();
+    taymer = setInterval(() => {
+      qolgan -= 1;
+      if (qolgan <= 0){
+        clearInterval(taymer);
+        shaxsiyYozishEl.innerHTML = '⏳ Yuborilmoqda...';
+        setTimeout(async () => {
+          let holat = 'nomalum';
+          try{
+            const r = await fetch(SHAXSIY_HOLAT_URL + '?id=' + encodeURIComponent(info.id), { headers: HUD_AUTH_HEADER });
+            const d = await r.json().catch(() => ({}));
+            holat = d.holat || 'nomalum';
+          }catch(e){}
+          shaxsiyYozishEl.innerHTML = holat === 'yuborildi' ? '✅ Yuborildi.'
+            : holat === 'bekor_qilindi' ? '❌ Bekor qilindi.'
+            : holat === 'xato' ? '⚠️ Yuborishda xato bo\'ldi.'
+            : '⚠️ Holatni tekshirib bo\'lmadi.';
+          setTimeout(() => { shaxsiyYozishEl.style.display = 'none'; }, 4000);
+        }, 900);
+        return;
+      }
+      chiz();
+    }, 1000);
+  }
+
+  // 2026-09-28 (Azizbek buyrug'i, takrorlash himoyasi): shu odamga oxirgi
+  // 30 daqiqada allaqachon xabar ketgan bo'lsa, bridge avtomatik-5-soniya
+  // o'rniga aniq Ha/Yo'q so'raydi -- shu UI shuni ko'rsatadi.
+  function takrorTasdiqNiKorsat(info){
+    shaxsiyYozishEl.style.display = 'block';
+    shaxsiyYozishEl.innerHTML =
+      '<div style="margin-top:8px;padding:10px 14px;border:1px solid rgba(255,180,80,.5);border-radius:10px;">' +
+      '⚠️ <b>' + escapeHtmlLocal(info.ism) + '</b>' +
+      (info.username ? ' (@' + escapeHtmlLocal(info.username) + ')' : '') +
+      ' ga ' + escapeHtmlLocal(info.oldingi_vaqt) + ' da ham yozilgan edi:<br>' +
+      '&laquo;' + escapeHtmlLocal(info.oldingi_matn) + '&raquo;<br>' +
+      'Yangi xabar: &laquo;' + escapeHtmlLocal(info.matn) + '&raquo;<br>' +
+      '<button id="takrorHaBtn" type="button">✅ Ha, baribir yubor</button> ' +
+      '<button id="takrorYoqBtn" type="button">❌ Yo\'q</button></div>';
+    const haBtn = document.getElementById('takrorHaBtn');
+    const yoqBtn = document.getElementById('takrorYoqBtn');
+    if (haBtn) haBtn.onclick = async function(){
+      try{
+        const r = await fetch(SHAXSIY_TAKROR_HA_URL, {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, HUD_AUTH_HEADER),
+          body: JSON.stringify({ id: info.id }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (d.holat === 'kutmoqda'){
+          shaxsiyYozishNiKorsat({ id: info.id, ism: info.ism, username: info.username, matn: info.matn, soniya: d.soniya || 5 });
+          return;
+        }
+      }catch(e){}
+      shaxsiyYozishEl.innerHTML = '<i>⚠️ Yubora olmadim, qayta urinib ko\'ring.</i>';
+    };
+    if (yoqBtn) yoqBtn.onclick = async function(){
+      try{
+        await fetch(SHAXSIY_TAKROR_YOQ_URL, {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, HUD_AUTH_HEADER),
+          body: JSON.stringify({ id: info.id }),
+        });
+      }catch(e){}
+      shaxsiyYozishEl.innerHTML = '<i>❌ Yuborilmadi.</i>';
+      setTimeout(() => { shaxsiyYozishEl.style.display = 'none'; }, 3000);
+    };
+  }
+
+  // ==== "OXIRGI AMALLAR" paneli — endi HAQIQIY, bridge'dagi /amallar ro'yxatidan
+  // (avval 4 ta qattiq yozilgan/statik qator bor edi, hech qachon o'zgarmasdi) ====
+  const oxirgiAmallarEl = document.getElementById('oxirgiAmallar');
+  // Video/demo ko'rinish (2026-09-21): oldin ko'rilgan qatorlar kalitini (vaqt+matn)
+  // saqlab boramiz — faqat shu ro'yxatda YO'Q bo'lgan (haqiqatan YANGI) qatorga
+  // kirish-animatsiyasi beriladi, birinchi yuklanishda esa hech narsa animatsiya
+  // bo'lmaydi (ko'z oldida "hammasi yangi" bo'lib yaltirab ketmasin).
+  let oxirgiAmallarKorilgan = new Set();
+  let oxirgiAmallarBoshlangichYuklandi = false;
+  function amalTuriniAniqla(matn){
+    const t = (matn || '').toLowerCase();
+    if (/gmail|email|pochta|xat|draft|qoralama/.test(t)) return { klass: 'turi-gmail', ikon: '\u{1F4E7}' };
+    if (/drive|hujjat|fayl ulash/.test(t)) return { klass: 'turi-drive', ikon: '\u{1F4C1}' };
+    if (/calendar|kalendar|uchrashuv|voqea/.test(t)) return { klass: 'turi-calendar', ikon: '\u{1F4C5}' };
+    if (/excel|jadval|xlsx|\.xls/.test(t)) return { klass: 'turi-excel', ikon: '\u{1F4CA}' };
+    if (/canva|dizayn/.test(t)) return { klass: 'turi-canva', ikon: '\u{1F3A8}' };
+    if (/brauzer|sayt|http|www\.|\.com|\.uz/.test(t)) return { klass: 'turi-brauzer', ikon: '\u{1F310}' };
+    if (/bash|powershell|buyruq|terminal|papka|skript|\.py/.test(t)) return { klass: 'turi-desktop', ikon: '\u{1F5A5}️' };
+    return { klass: '', ikon: '⚙️' };
+  }
+  async function oxirgiAmallarniYangila(){
+    try{
+      const res = await fetch(AMALLAR_URL, { method: 'GET', headers: HUD_AUTH_HEADER });
+      if (!res.ok) return;
+      const ro_yxat = await res.json();
+      if (!Array.isArray(ro_yxat) || ro_yxat.length === 0){
+        oxirgiAmallarEl.innerHTML = '<div class="log-line log-line-bosh">Hali haqiqiy so\'rov yuborilmagan...</div>';
+        return;
+      }
+      const escapeHtml = function(s){
+        const div = document.createElement('div');
+        div.textContent = s == null ? '' : String(s);
+        return div.innerHTML;
+      };
+      const korilganYangi = new Set();
+      oxirgiAmallarEl.innerHTML = ro_yxat.map(function(a){
+        const kalit = a.vaqt + '|' + a.matn + '|' + a.status;
+        korilganYangi.add(kalit);
+        const haqiqatanYangi = oxirgiAmallarBoshlangichYuklandi && !oxirgiAmallarKorilgan.has(kalit);
+        const statusKlass = (a.status === 'xato' || a.status === 'timeout') ? ' ' + a.status : '';
+        const turi = amalTuriniAniqla(a.matn);
+        const klasslar = 'log-line' + statusKlass + (turi.klass ? ' ' + turi.klass : '') + (haqiqatanYangi ? ' amal-yangi' : '');
+        return '<div class="' + klasslar + '"><span class="log-ikon">' + turi.ikon + '</span><span class="log-vaqt">' + escapeHtml(a.vaqt) + '</span>' + escapeHtml(a.matn) + '</div>';
+      }).join('');
+      oxirgiAmallarKorilgan = korilganYangi;
+      oxirgiAmallarBoshlangichYuklandi = true;
+    } catch (e) {
+      // Bridge vaqtincha javob bermasa ham panel eski holatida qoladi — xato ko'rsatilmaydi
+      // (bu faqat kosmetik panel, asosiy funksiyalarga ta'sir qilmasligi kerak).
+    }
+  }
+  oxirgiAmallarniYangila();
+  setInterval(oxirgiAmallarniYangila, 4000);
+
+  // ==== "XAVFSIZLIK JURNALI" paneli (roadmap #7) — bridge'dagi /xavfsizlik'dan.
+  // #1'dan farqi: bu yerda FAQAT sezgir (Gmail/Drive/Calendar yozish, xavfli
+  // Bash) amallar ko'rinadi, ular ruxsat berilgan/rad etilganligi bilan birga. ====
+  const XAVFSIZLIK_URL = 'http://localhost:8090/xavfsizlik';
+  const xavfsizlikJurnaliEl = document.getElementById('xavfsizlikJurnali');
+  async function xavfsizlikJurnaliniYangila(){
+    try{
+      const res = await fetch(XAVFSIZLIK_URL, { method: 'GET', headers: HUD_AUTH_HEADER });
+      if (!res.ok) return;
+      const ro_yxat = await res.json();
+      if (!Array.isArray(ro_yxat) || ro_yxat.length === 0){
+        xavfsizlikJurnaliEl.innerHTML = '<div class="log-line log-line-bosh">Hali sezgir amal qayd etilmagan...</div>';
+        return;
+      }
+      xavfsizlikJurnaliEl.innerHTML = ro_yxat.map(function(a){
+        const radEtildi = a.holat === 'rad_etildi';
+        const statusKlass = radEtildi ? ' xato' : '';
+        const belgi = radEtildi ? '⛔ ' : '✅ ';
+        return '<div class="log-line' + statusKlass + '"><span>' + escapeHtmlUmumiy(a.vaqt) + '</span>' + belgi + escapeHtmlUmumiy(a.izoh) + '</div>';
+      }).join('');
+    } catch (e) {
+      // Bridge vaqtincha javob bermasa panel eski holatida qoladi (kosmetik panel).
+    }
+  }
+  xavfsizlikJurnaliniYangila();
+  setInterval(xavfsizlikJurnaliniYangila, 4000);
+
+  // ==== "BILDIRISHNOMA MARKAZI" (roadmap #9 MVP) — bridge'dagi
+  // /bildirishnomalar'dan (fon skriptlar, hozircha jarvis_proaktiv.py,
+  // Telegram bilan BIR VAQTDA shu umumiy faylga ham yozadi). Faqat HUD
+  // ochilgandan KEYIN kelgan YANGI yozuvlar toast sifatida ko'rsatiladi —
+  // sahifa yuklanganda mavjud eski yozuvlar uchun toast chiqmaydi. ====
+  const BILDIRISHNOMA_URL = 'http://localhost:8090/bildirishnomalar';
+  const bildirishnomaStackEl = document.getElementById('bildirishnomaStack');
+  let bildirishnomaBoshlangichYuklandi = false;
+  let bildirishnomaOxirgiSoni = 0;
+
+  function bildirishnomaToastKorsat(yozuv){
+    const el = document.createElement('div');
+    el.className = 'bildirishnoma-toast';
+    el.innerHTML = '<span class="bt-label">\u{1F514} BILDIRISHNOMA — ' + escapeHtmlUmumiy(yozuv.manba || 'jarvis') + '</span>' +
+                   '<span class="bt-text">' + escapeHtmlUmumiy(yozuv.matn) + '</span>';
+    bildirishnomaStackEl.appendChild(el);
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 500);
+    }, 8000);
+  }
+
+  async function bildirishnomalarniYangila(){
+    try{
+      const res = await fetch(BILDIRISHNOMA_URL, { method: 'GET', headers: HUD_AUTH_HEADER });
+      if (!res.ok) return;
+      const ro_yxat = await res.json();
+      if (!Array.isArray(ro_yxat)) return;
+      if (!bildirishnomaBoshlangichYuklandi){
+        bildirishnomaOxirgiSoni = ro_yxat.length;
+        bildirishnomaBoshlangichYuklandi = true;
+        return;
+      }
+      if (ro_yxat.length > bildirishnomaOxirgiSoni){
+        ro_yxat.slice(bildirishnomaOxirgiSoni).forEach(bildirishnomaToastKorsat);
+        bildirishnomaOxirgiSoni = ro_yxat.length;
+      }
+    } catch (e) {
+      // Bridge vaqtincha javob bermasa jim o'tkaziladi.
+    }
+  }
+  bildirishnomalarniYangila();
+  setInterval(bildirishnomalarniYangila, 6000);
+
+  // ==== "VAZIFALAR VA JADVAL" paneli — endi HAQIQIY, bridge'dagi /vazifalar'dan
+  // (avval 4 ta qattiq yozilgan namunaviy qator bor edi: "Mijoz bilan uchrashuv"
+  // va h.k., xotira/vazifalar.md'ga hech qanday aloqasi yo'q edi) ====
+  const VAZIFALAR_URL = 'http://localhost:8090/vazifalar';
+  const vazifalarRoyxatiEl = document.getElementById('vazifalarRoyxati');
+  function escapeHtmlUmumiy(s){
+    const div = document.createElement('div');
+    div.textContent = s == null ? '' : String(s);
+    return div.innerHTML;
+  }
+  async function vazifalarniYangila(){
+    try{
+      const res = await fetch(VAZIFALAR_URL, { method: 'GET', headers: HUD_AUTH_HEADER });
+      if (!res.ok) return;
+      const ro_yxat = await res.json();
+      if (!Array.isArray(ro_yxat) || ro_yxat.length === 0){
+        vazifalarRoyxatiEl.innerHTML = '<div class="task-line task-line-bosh">Hozir ochiq vazifa yo\'q</div>';
+        return;
+      }
+      vazifalarRoyxatiEl.innerHTML = ro_yxat.map(function(v){
+        return '<div class="task-line"><span>&bull;</span>' + escapeHtmlUmumiy(v) + '</div>';
+      }).join('');
+    } catch (e) {
+      // Bridge vaqtincha javob bermasa panel eski holatida qoladi (kosmetik panel).
+    }
+  }
+  vazifalarniYangila();
+  setInterval(vazifalarniYangila, 60000);
+
+  // ==== YANGI: "JARAYONLAR HOLATI" paneli — fon xizmatlarning REAL onlayn/o'chiq
+  // holati, bridge'dagi /jarayonlar (psutil+port tekshiruvi) orqali ====
+  const JARAYONLAR_URL = 'http://localhost:8090/jarayonlar';
+  const jarayonlarRoyxatiEl = document.getElementById('jarayonlarRoyxati');
+  async function jarayonlarniYangila(){
+    try{
+      const res = await fetch(JARAYONLAR_URL, { method: 'GET', headers: HUD_AUTH_HEADER });
+      if (!res.ok) return;
+      const ro_yxat = await res.json();
+      if (!Array.isArray(ro_yxat) || ro_yxat.length === 0) return;
+      jarayonlarRoyxatiEl.innerHTML = ro_yxat.map(function(j){
+        const holatKlass = j.onlayn ? 'onlayn' : 'ochiq';
+        const holatMatn = j.onlayn ? 'ONLAYN' : "O'CHIQ";
+        return '<div class="jarayon-line"><span class="jarayon-nom">' + escapeHtmlUmumiy(j.nom) + '</span>' +
+               '<span class="jarayon-holat ' + holatKlass + '"><span class="dot"></span>' + holatMatn + '</span></div>';
+      }).join('');
+    } catch (e) {
+      // Bridge vaqtincha javob bermasa panel eski holatida qoladi (kosmetik panel).
+    }
+  }
+  jarayonlarniYangila();
+  setInterval(jarayonlarniYangila, 5000);
+
+  // 2026-09-21: `.panel-jarayonlar`ni `.panel-left`ning HAQIQIY renderlangan
+  // pastki chegarasidan darhol keyin dinamik joylashtiradi (yuqoridagi CSS
+  // izohiga qarang — FIKS top:245px OXIRGI AMALLAR/XAVFSIZLIK JURNALI bilan
+  // ustma-ust tushib kelgan edi). Har 700ms'da qayta hisoblanadi — shunda
+  // yangi amal qo'shilishi, transkript uzayishi kabi HAR QANDAY balandlik
+  // o'zgarishida ham ikkala panel hech qachon to'qnashmaydi.
+  const panelLeftEl = document.querySelector('.panel-left');
+  const panelJarayonlarEl = document.querySelector('.panel-jarayonlar');
+  const panelTasksEl = document.querySelector('.panel-tasks');
+  // 2026-09-27 (Azizbek topdi): "OXIRGI AMALLAR" (`.panel-left`) uzun
+  // ro'yxat bilan pastga cho'zilganda, undan keyin joylashtirilgan
+  // `.panel-jarayonlar`ning pastki chegarasi endi `.panel-tasks`
+  // ("VAZIFALAR VA JADVAL", `position:fixed; bottom:40px` bilan EKRAN
+  // TAGIGA qattiq mahkamlangan) bilan ustma-ust tushib qolishi mumkin edi
+  // -- xuddi 2026-09-21dagi `.panel-jarayonlar` bilan bo'lgan muammoning
+  // O'ZI, faqat bir qavat pastroqda. Yechim bir xil: `.panel-tasks`ning
+  // "bottom" langar nuqtasini dinamik "top"ga almashtiramiz -- ODATDA
+  // (qisqa ro'yxatlar) o'z tabiiy pastki joyida qoladi, LEKIN
+  // `.panel-jarayonlar` pastki chegarasi bilan to'qnashadigan bo'lsa,
+  // undan darhol pastga suriladi.
+  function chapPanellarniJoylashtir(){
+    if (!panelLeftEl || !panelJarayonlarEl) return;
+    const pastQirra = panelLeftEl.getBoundingClientRect().bottom;
+    panelJarayonlarEl.style.top = Math.round(pastQirra + 16) + 'px';
+    if (panelTasksEl) {
+      const jarayonlarPastQirra = panelJarayonlarEl.getBoundingClientRect().bottom;
+      const tasksBalandligi = panelTasksEl.getBoundingClientRect().height;
+      const odatiyTop = window.innerHeight - 40 - tasksBalandligi; // CSS'dagi bottom:40px bilan bir xil natija
+      const kerakliTop = Math.max(odatiyTop, jarayonlarPastQirra + 16);
+      panelTasksEl.style.bottom = 'auto';
+      panelTasksEl.style.top = Math.round(kerakliTop) + 'px';
+    }
+  }
+  chapPanellarniJoylashtir();
+  setInterval(chapPanellarniJoylashtir, 700);
+  window.addEventListener('resize', chapPanellarniJoylashtir);
+  const BRIDGE_CLIENT_TIMEOUT_MS = 200000; // bridge'ning o'z ichki 180s chegarasidan biroz ko'proq — tarmoq kechikishiga joy (tezkor buyruqlar bridge ichida darhol qaytadi, bu faqat murakkab so'rovlar uchun)
+
+  // E3-bosqich: Sardor ovozi (edge-tts, bridge orqali) — muvaffaqiyatsiz bo'lsa mahalliy (Pavel) ovoziga qaytiladi
+  const SPEAK_URL = 'http://localhost:8090/speak';
+  const SPEAK_CLIENT_TIMEOUT_MS = 30000; // 2026-09-28: bridge endi timeout bo'lsa 1 marta qisqartirib qayta urinadi (18s+8s=26s) — shundan biroz ko'proq
+
+  // E4-bosqich: yozilgan audioni serverda (Google STT + mahalliy Whisper) aniqroq matnga aylantirish
+  const TRANSCRIBE_URL = 'http://localhost:8090/transcribe';
+  const TRANSCRIBE_CLIENT_TIMEOUT_MS = 30000; // bridge'ning o'z ichki ~25s chegarasidan biroz ko'proq
+
+  // Muvaffaqiyatli bo'lsa aniqlangan matnni qaytaradi, aks holda (xato/timeout/bo'sh) null —
+  // chaqiruvchi shu holda brauzerning o'z (Web Speech API) natijasini ishlatishda davom etadi.
+  // Hech qanday xato foydalanuvchiga ko'rsatilmaydi (faqat konsolga jim ogohlantirish).
+  async function transcribeViaBridge(audioBlob){
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TRANSCRIBE_CLIENT_TIMEOUT_MS);
+    try{
+      const res = await fetch(TRANSCRIBE_URL, {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': audioBlob.type || 'audio/webm' }, HUD_AUTH_HEADER),
+        body: audioBlob,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => ({}));
+      const text = (data.text || '').trim();
+      return text || null;
+    } catch (err){
+      clearTimeout(timeoutId);
+      console.warn('[JARVIS eshitish] /transcribe orqali aniqroq matn olinmadi, brauzer natijasi ishlatilmoqda:', err.message || err);
+      return null;
+    }
+  }
+
+  // ==== E3-bosqich: Jarvis javobini ovozda o'qish (brauzerning o'z window.speechSynthesis API'si, kutubxonasiz) ====
+  const synth = window.speechSynthesis;
+  let chosenVoice = null;
+
+  // Windows/Edge'da keng tarqalgan erkak ovoz nomlaridagi kalit so'zlar (katta-kichik harfga sezgir emas)
+  const MALE_VOICE_KEYWORDS = ['pavel', 'dmitry', 'yuri', 'george', 'david', 'mark', 'guy'];
+
+  function pickVoice(){
+    if (!synth) return null;
+    const voices = synth.getVoices();
+    if (!voices.length) return null;
+
+    // Diagnostika uchun: kompyuterda aslida qanday ovozlar borligini har doim konsolga to'liq chiqaramiz
+    console.log('[JARVIS ovoz] Mavjud ovozlar ro\'yxati (' + voices.length + ' ta):',
+      voices.map(v => `${v.name} - ${v.lang}`).join(', '));
+
+    const isMaleName = (v) => MALE_VOICE_KEYWORDS.some(kw => v.name.toLowerCase().includes(kw));
+    const isUzRu = (v) => v.lang && (v.lang.toLowerCase().startsWith('uz') || v.lang.toLowerCase().startsWith('ru'));
+    const isEn = (v) => v.lang && v.lang.toLowerCase().startsWith('en');
+
+    // 1) uz/ru orasidan erkak ismiga mos ovoz — eng ustuvor
+    let voice = voices.find(v => isUzRu(v) && isMaleName(v));
+    if (voice){ console.log(`[JARVIS ovoz] Tanlandi (uz/ru erkak): ${voice.name} - ${voice.lang}`); return voice; }
+
+    // 2) topilmasa — ingliz tilidagi shu nomlardan birortasi (til boshqacha bo'lsa ham, ayoldan ko'ra afzal)
+    voice = voices.find(v => isEn(v) && isMaleName(v));
+    if (voice){ console.log(`[JARVIS ovoz] Tanlandi (en erkak, zaxira): ${voice.name} - ${voice.lang}`); return voice; }
+
+    // 3) eski tartib: avval o'zbekcha, keyin ruscha (erkak/ayolligiga qaramay)
+    voice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('uz'))
+         || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('ru'));
+    if (voice){
+      console.warn(`[JARVIS ovoz] Erkak ovoz topilmadi, standart(ayol bo'lishi mumkin) ovoz ishlatilmoqda: ${voice.name} - ${voice.lang}`);
+      return voice;
+    }
+
+    console.warn("[JARVIS ovoz] Erkak ovoz topilmadi, standart(ayol) ovoz ishlatilmoqda: uz/ru ovoz umuman topilmadi, brauzerning tizim standart ovozi ishlatiladi.");
+    return null;
+  }
+
+  if (synth){
+    chosenVoice = pickVoice();
+    // Ko'p brauzerlarda ovozlar ro'yxati asinxron yuklanadi — tayyor bo'lgach qaytadan tanlaymiz
+    synth.addEventListener('voiceschanged', () => { chosenVoice = pickVoice(); });
+  } else {
+    console.warn("Bu brauzer window.speechSynthesis'ni qo'llab-quvvatlamaydi — javob faqat matn sifatida ko'rsatiladi, ovozda o'qilmaydi.");
+  }
+
+  function speakAnswer(text){
+    if (!text || !text.trim()) return;
+    if (!synth){
+      // Ovoz umuman yo'q (brauzer speechSynthesis'ni qo'llab-quvvatlamaydi) — baribir E6-bosqich
+      // caption'ini ko'rsatamiz (matn o'qish vaqtiga taxminan mos, uzunlikka qarab), demo "jim" qolmasin.
+      showJarvisCaption(text);
+      hideJarvisCaptionSoon(Math.max(2500, Math.min(12000, text.length * 60)));
+      return;
+    }
+    try{
+      synth.cancel(); // oldingi ovoz hali o'qilayotgan bo'lsa — avval to'xtatamiz, ustma-ust chiqmasin
+      const utter = new SpeechSynthesisUtterance(text);
+      if (chosenVoice){
+        utter.voice = chosenVoice;
+        utter.lang = chosenVoice.lang;
+      } else {
+        utter.lang = 'uz-UZ'; // mos ovoz topilmasa ham til-belgisi qoldiriladi, brauzer o'z standart ovozi bilan o'qiydi
+      }
+      // E5-bosqich: browser TTS'da haqiqiy audio-oqim yo'q (Web Speech API buni bermaydi), shuning
+      // uchun sodda ritmik pulslanish bilan taqlid qilamiz — hech bo'lmasa shar "jim" turmaydi.
+      // E6-bosqich: aynan shu onstart/onend momentlarida JARVIS-caption ham ovoz bilan sinxron chiqadi/so'nadi.
+      let synthPulseTimer = null;
+      utter.onstart = () => {
+        synthPulseTimer = setInterval(() => applyOrbPulse(0.35 + Math.random() * 0.5), 140);
+        showJarvisCaption(text);
+      };
+      const stopSynthPulse = () => {
+        if (synthPulseTimer) clearInterval(synthPulseTimer);
+        synthPulseTimer = null;
+        if (!micActive) stopOrbAudioReactive();
+        hideJarvisCaptionSoon(1200);
+      };
+      utter.onend = stopSynthPulse;
+      utter.onerror = stopSynthPulse;
+      synth.speak(utter);
+    } catch (e){
+      console.error('Ovozda o\'qishda xato:', e); // jim xato — sahifa ishlashda davom etadi
+    }
+  }
+
+  // E3-bosqich: avval /speak orqali Sardor (edge-tts) ovozini so'raymiz. Muvaffaqiyatli
+  // audio kelsa — o'sha ijro etiladi. Xato/timeout/ulanmasa (jim, hech qanday xato
+  // ko'rsatilmaydi) — true/false qaytaradi, chaqiruvchi false bo'lsa mahalliy ovozga qaytadi.
+  async function speakViaBridge(text){
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), SPEAK_CLIENT_TIMEOUT_MS);
+    try{
+      const res = await fetch(SPEAK_URL, {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, HUD_AUTH_HEADER),
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) return false;
+
+      const blob = await res.blob();
+      if (!blob || !blob.size) return false;
+
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true });
+      audio.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
+      await audio.play(); // playback boshlanishini kutamiz (butun ijro tugashini emas)
+      reactOrbToAudioElement(audio); // E5-bosqich: shar Jarvis ovoziga mos pulslanadi
+      // E6-bosqich: JARVIS-caption ovoz bilan AYNAN BIR VAQTDA chiqadi, ovoz tugagach so'nadi
+      showJarvisCaption(text);
+      audio.addEventListener('ended', () => hideJarvisCaptionSoon(1200), { once: true });
+      audio.addEventListener('error', () => hideJarvisCaptionSoon(200), { once: true });
+      return true;
+    } catch (err){
+      clearTimeout(timeoutId);
+      console.warn("[JARVIS ovoz] /speak (Sardor) orqali ovoz olinmadi, mahalliy (zaxira) ovozga o'tildi:", err.message || err);
+      return false;
+    }
+  }
+
+  async function speakWithFallback(text){
+    if (!text || !text.trim()) return;
+    const ok = await speakViaBridge(text);
+    if (!ok) speakAnswer(text); // zaxira: brauzerning o'z speechSynthesis (Pavel)
+  }
+
+  function setAnswerText(text){
+    answerTextEl.textContent = text;
+    speakWithFallback(text); // fire-and-forget
+  }
+
+  // "Tozalash" — matnni/javobni "toza sahifa" holatiga qaytaradi. Mikrofon holatiga tegmaydi
+  // (hali yoniq bo'lsa, tinglashda davom etaveradi). Mikrofon qayta yoqilganda ham shu chaqiriladi.
+  function tozalaSuhbat(){
+    accumulatedTranscript = '';
+    setTranscriptText('...');
+    hideUserCaption();
+    hideJarvisCaptionNow();
+    panelAnswer.style.display = 'none';
+    answerTextEl.textContent = '';
+    shaxsiyYozishEl.style.display = 'none';
+  }
+  clearBtn.addEventListener('click', tozalaSuhbat);
+
+  // E3-BOSQICH: sobiq "Yuborish" tugmasi bosilganda ishlagan mantiq — endi alohida funksiya,
+  // mikrofon o'chirilganda (stopMic) accumulatedTranscript bo'sh bo'lmasa avtomatik chaqiriladi.
+  // Bo'sh matn bilan chaqirilsa — jim qaytadi, hech qanday xato ko'rsatmaydi.
+  async function submitTranscript(){
+    const text = (accumulatedTranscript || '').trim();
+    if (!text) return;
+
+    panelAnswer.style.display = 'block';
+    answerTextEl.textContent = "O'ylayapman..."; // vaqtinchalik holat matni — ovozda o'qilmaydi
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), BRIDGE_CLIENT_TIMEOUT_MS);
+
+    try{
+      const res = await fetch(BRIDGE_URL, {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, HUD_AUTH_HEADER),
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok){
+        shaxsiyYozishEl.style.display = 'none';
+        setAnswerText(data.error || data.answer || `Bridge xato qaytardi (${res.status}).`);
+      } else {
+        showConfirmCaption(); // E5-bosqich: buyruq muvaffaqiyatli bajarilgani haqida qisqa tasdiq
+        setAnswerText(data.answer || '(bo\'sh javob keldi)');
+        if (data.takror_tasdiq){
+          takrorTasdiqNiKorsat(data.takror_tasdiq);
+        } else if (data.shaxsiy_yozish){
+          shaxsiyYozishNiKorsat(data.shaxsiy_yozish);
+        } else {
+          shaxsiyYozishEl.style.display = 'none';
+        }
+      }
+    } catch (err){
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError'){
+        setAnswerText(`Javob ${Math.round(BRIDGE_CLIENT_TIMEOUT_MS/1000)} soniyada kelmadi, bekor qilindi. ` +
+          `Bridge server (sinov_bridge_boshlash.bat) ishga tushganini tekshiring.`);
+      } else {
+        setAnswerText(`Bridge serverga ulanib bo'lmadi: ${err.message}. ` +
+          `sinov_bridge_boshlash.bat orqali serverni ishga tushirganingizni tekshiring.`);
+      }
+    }
+  }
+</script>
+</body>
+</html>
